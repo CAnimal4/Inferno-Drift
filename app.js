@@ -231,7 +231,7 @@ InfernoDrift2 pseudo-3D racer (static, no build)
     TRACKS.forEach((m, idx) => {
       const card = document.createElement('button');
       card.className = 'map-card';
-      card.innerHTML = `<div class="name">${m.name}</div><div class="muted tiny">${m.desc}</div><div class="tiny muted">${m.length} · ${m.difficulty}</div>`;
+      card.innerHTML = `<div class="name">${m.name}</div><div class="muted tiny">${m.desc}</div><div class="tiny muted">${m.length} - ${m.difficulty}</div>`;
       card.addEventListener('click', () => selectMap(idx));
       mapListEl.appendChild(card);
     });
@@ -498,7 +498,7 @@ InfernoDrift2 pseudo-3D racer (static, no build)
     hudSpeed.textContent = (game.speed | 0);
     hudScore.textContent = game.score.toFixed(0);
     hudCombo.textContent = `x${game.combo.toFixed(1)}`;
-    hudLap.textContent = `${game.lap}/${TRACKS[game.mapIndex].laps === Infinity ? 'INF' : TRACKS[game.mapIndex].laps} · ${game.time.toFixed(1)}s`;
+    hudLap.textContent = `${game.lap}/${TRACKS[game.mapIndex].laps === Infinity ? 'INF' : TRACKS[game.mapIndex].laps} - ${game.time.toFixed(1)}s`;
     heatBar.style.width = `${(game.heat / CONFIG.maxHeat) * 100}%`;
     driftBar.style.width = `${game.driftMeter}%`;
     boostBar.style.width = `${game.boost}%`;
