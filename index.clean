@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Inferno Drift - Drift Survival</title>
+  <title>Inferno Drift  Drift Survival</title>
   <meta name="description" content="Inferno Drift is a high-speed, score-attack drift survival game built for desktop, tablet, and phone." />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap">
@@ -426,7 +426,7 @@
         <div class="card">
           <h2>Design Snapshot</h2>
           <div class="tip">
-            Drift-first controls. Heat rewards aggression. Near-miss chains spike multipliers. Overdrive is a short, violent burst - do not overcook or you will overheat. Hazards are patterned slaloms, walls, and shifts tied to speed and heat.
+            Drift-first controls. Heat rewards aggression. Near-miss chains spike multipliers. Overdrive is a short, violent burstdo not overcook or you will overheat. Hazards are patterned slaloms, walls, and shifts tied to speed and heat.
           </div>
           <div class="statline">
             <div>States: MENU -> PLAYING -> OVERDRIVE -> PAUSED -> GAME OVER</div>
@@ -1020,3 +1020,5 @@
   </script>
 </body>
 </html>
+  </div>
+
