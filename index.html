@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>InfernoDrift2</title>
   <meta name="color-scheme" content="dark light" />
+  <link rel="icon" href="./assets/favicon.ico">
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg">
+  <link rel="apple-touch-icon" sizes="180x180" href="./assets/favicon-180.png">
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -18,6 +21,7 @@
       </div>
     </div>
     <div class="top-actions">
+      <button id="toggleFull" class="ghost">Fullscreen</button>
       <button id="openHelp" class="ghost">How to play</button>
       <button id="openSettings" class="ghost">Settings</button>
       <a class="ghost" href="assets/classic-launcher.html" target="_blank" rel="noopener">Play Classic</a>
@@ -171,9 +175,17 @@
             <option value="arrows">Arrows + Space</option>
           </select>
         </label>
+        <label class="setting">
+          <span>Enemy AI</span>
+          <select id="settingEnemyAI">
+            <option value="standard">Standard</option>
+            <option value="adaptive">Adaptive (learns)</option>
+          </select>
+        </label>
       </div>
-      <div class="muted tiny">Settings persist locally.</div>
+      <div class="muted tiny">Settings persist locally. Adaptive AI stores a small table; you can reset it below.</div>
       <div class="overlay-actions">
+        <button id="resetAI" class="ghost">Reset Enemy Learning</button>
         <button id="closeSettings" class="primary">Close</button>
       </div>
     </div>
