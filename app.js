@@ -1,4 +1,4 @@
-/*
+﻿/*
 InfernoDrift2 refactor plan:
 - Replace the old embedded THREE.js launcher with a lean Canvas 2D pseudo-3D racer.
 - Reuse the state machine/settings UI, but rebuild gameplay: segment-based road, heat/boost/drift, enemies/pickups.
@@ -71,6 +71,7 @@ InfernoDrift2 refactor plan:
   const canvas = el('#gameCanvas');
   const ctx = canvas.getContext('2d');
   let viewW = canvas.clientWidth, viewH = canvas.clientHeight, viewScale = 1;
+  let lastDt = 0;
   const hud = el('#hud');
   const hudSpeed = el('#hudSpeed');
   const hudScore = el('#hudScore');
@@ -95,8 +96,8 @@ InfernoDrift2 refactor plan:
       difficulty: 'Easy',
       length: '1.2 km',
       sections: [
-        { len: 50, curve: 0, hill: 0 },
-        { len: 80, curve: 0.5, hill: 4 },
+        { len: 50, curve: 0, hill: 0, boost: true },
+        { len: 80, curve: 0.5, hill: 4, boost: true },
         { len: 60, curve: -0.4, hill: -2, hazard: 'lava' },
         { len: 40, curve: 0, hill: 0 },
       ],
@@ -110,7 +111,7 @@ InfernoDrift2 refactor plan:
       length: '1.6 km',
       sections: [
         { len: 70, curve: 0.2, hill: 1 },
-        { len: 90, curve: -0.6, hill: 5, hazard: 'lava' },
+        { len: 90, curve: -0.6, hill: 5, hazard: 'lava', boost: true },
         { len: 60, curve: 0.4, hill: -3 },
         { len: 40, curve: 0, hill: 0 },
       ],
@@ -124,7 +125,7 @@ InfernoDrift2 refactor plan:
       length: '1.9 km',
       sections: [
         { len: 50, curve: 0.3, hill: 2 },
-        { len: 70, curve: 0.6, hill: 4, hazard: 'lava' },
+        { len: 70, curve: 0.6, hill: 4, hazard: 'lava', boost: true },
         { len: 80, curve: -0.7, hill: -4 },
         { len: 40, curve: -0.4, hill: 1 },
       ],
@@ -139,7 +140,7 @@ InfernoDrift2 refactor plan:
       sections: [
         { len: 80, curve: 0, hill: 2 },
         { len: 60, curve: 0.5, hill: 1, hazard: 'lava' },
-        { len: 80, curve: -0.5, hill: -2 },
+        { len: 80, curve: -0.5, hill: -2, boost: true },
         { len: 50, curve: 0, hill: 0 },
       ],
     },
@@ -153,7 +154,7 @@ InfernoDrift2 refactor plan:
       sections: [
         { len: 60, curve: 0.4, hill: 2 },
         { len: 60, curve: -0.5, hill: -3, hazard: 'lava' },
-        { len: 60, curve: 0.5, hill: 1 },
+        { len: 60, curve: 0.5, hill: 1, boost: true },
         { len: 60, curve: -0.4, hill: 0 },
       ],
     },
@@ -167,7 +168,7 @@ InfernoDrift2 refactor plan:
       sections: [
         { len: 70, curve: 0, hill: 0 },
         { len: 60, curve: 0.7, hill: 3, hazard: 'lava' },
-        { len: 60, curve: -0.7, hill: -3 },
+        { len: 60, curve: -0.7, hill: -3, boost: true },
         { len: 70, curve: 0.3, hill: 1 },
       ],
     },
@@ -297,7 +298,7 @@ InfernoDrift2 refactor plan:
     TRACKS.forEach((m, idx) => {
       const card = document.createElement('button');
       card.className = 'map-card';
-      card.innerHTML = `<div class="name">${m.name}</div><div class="muted tiny">${m.desc}</div><div class="tiny muted">${m.length} · ${m.difficulty}</div>`;
+      card.innerHTML = `<div class="name">${m.name}</div><div class="muted tiny">${m.desc}</div><div class="tiny muted">${m.length} Â· ${m.difficulty}</div>`;
       card.addEventListener('click', () => selectMap(idx));
       mapListEl.appendChild(card);
     });
@@ -314,12 +315,17 @@ InfernoDrift2 refactor plan:
   }
 
   function resizeCanvas() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = canvas.clientWidth * dpr;
-    canvas.height = canvas.clientHeight * dpr;
-    viewW = canvas.clientWidth;
-    viewH = canvas.clientHeight;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+    viewW = w;
+    viewH = h;
     viewScale = dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   /* Settings */
@@ -389,6 +395,8 @@ InfernoDrift2 refactor plan:
           width: CONFIG.roadWidth,
           color: (segments.length % 2 === 0) ? '#111827' : '#0d1320',
           hazard: sec.hazard === 'lava' && i > sec.len * 0.3 && i < sec.len * 0.7,
+          boostPad: sec.boost && i % 14 < 6,
+          prop: Math.random() > 0.82 ? (Math.random() > 0.5 ? 'rock' : 'sign') : null,
         });
         z += CONFIG.segmentLength;
       }
@@ -434,6 +442,7 @@ InfernoDrift2 refactor plan:
     const t = now();
     const dt = clamp(t - game.lastFrame, 0, 0.05);
     game.lastFrame = t;
+    lastDt = dt;
     update(dt);
     render();
     requestAnimationFrame(loop);
@@ -500,6 +509,10 @@ InfernoDrift2 refactor plan:
       game.heat += CONFIG.heatLava * dt;
       addCombo(0.05);
     }
+    if (seg.boostPad) {
+      game.speed = clamp(game.speed + CONFIG.boostForce * 0.35 * dt, 0, CONFIG.maxSpeed * 1.3);
+      game.boost = clamp(game.boost + 18 * dt, 0, 100);
+    }
 
     // drift/boost
     if (input.drift) {
@@ -527,6 +540,8 @@ InfernoDrift2 refactor plan:
     game.score += game.speed * 0.12 * dt * game.combo;
     game.comboTimer = Math.max(0, game.comboTimer - dt);
     if (game.comboTimer <= 0) game.combo = Math.max(1, game.combo - 0.25);
+    if (!Number.isFinite(game.speed)) game.speed = 0;
+    if (!Number.isFinite(game.pos.x)) game.pos.x = 0;
 
     // collisions with enemies
     for (const e of game.enemies) {
@@ -718,7 +733,7 @@ InfernoDrift2 refactor plan:
     hudSpeed.textContent = (game.speed | 0);
     hudScore.textContent = game.score.toFixed(0);
     hudCombo.textContent = `x${game.combo.toFixed(1)}`;
-    hudLap.textContent = `${game.lap}/${TRACKS[game.mapIndex].laps === Infinity ? '∞' : TRACKS[game.mapIndex].laps} · ${game.time.toFixed(1)}s`;
+    hudLap.textContent = `${game.lap}/${TRACKS[game.mapIndex].laps === Infinity ? "INF" : TRACKS[game.mapIndex].laps} - ${game.time.toFixed(1)}s`;
     heatBar.style.width = `${(game.heat / CONFIG.maxHeat) * 100}%`;
     driftBar.style.width = `${game.driftMeter}%`;
     boostBar.style.width = `${game.boost}%`;
@@ -734,6 +749,7 @@ InfernoDrift2 refactor plan:
     ctx.fillRect(0, 0, w, h);
     renderRoad(w, h);
     renderPickups(w, h);
+    renderProps(w, h);
     renderEnemies(w, h);
     renderPlayer(w, h);
     renderParticles(w, h);
@@ -778,6 +794,10 @@ InfernoDrift2 refactor plan:
       if (seg.hazard) {
         ctx.fillStyle = 'rgba(255,96,48,0.4)';
         drawQuad(p1.x * 0.4, p1.y, p2.x * 0.4, p2.y, p1.scale * 0.4, p2.scale * 0.4);
+      }
+      if (seg.boostPad) {
+        ctx.fillStyle = 'rgba(255,210,80,0.55)';
+        drawQuad(p1.x * 0.18, p1.y, p2.x * 0.18, p2.y, p1.scale * 0.18, p2.scale * 0.18);
       }
       // center line
       ctx.strokeStyle = 'rgba(255,255,255,0.5)';
@@ -849,6 +869,25 @@ InfernoDrift2 refactor plan:
     }
   }
 
+  function renderProps(w, h) {
+    const cam = { x: game.pos.x * CONFIG.roadWidth, y: CONFIG.cameraHeight, z: game.pos.z - 300, depth: CONFIG.cameraDepth };
+    for (let i = 0; i < CONFIG.drawSegments; i += 8) {
+      const seg = game.track.segments[(findSegment(game.pos.z).index + i) % game.track.segments.length];
+      if (!seg.prop) continue;
+      const offset = (seg.prop === 'rock' ? -1.6 : 1.6) * CONFIG.roadWidth;
+      const p = project(offset, seg.y, seg.z - game.pos.z, cam, w, h);
+      if (!p) continue;
+      const size = 28 * p.scale * 40;
+      ctx.fillStyle = seg.prop === 'rock' ? '#1f2937' : '#ff9f40';
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y - size);
+      ctx.lineTo(p.x - size * 0.6, p.y + size * 0.4);
+      ctx.lineTo(p.x + size * 0.6, p.y + size * 0.4);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
   function renderParticles(w, h) {
     if (!QUALITY[game.settings.gfx].particles) return;
     for (const p of game.particles) {
@@ -882,13 +921,13 @@ InfernoDrift2 refactor plan:
     ctx.fillStyle = '#fff';
     ctx.font = '12px monospace';
     const lines = [
-      `fps ${game.fps.toFixed(0)}`,
-      `spd ${game.speed.toFixed(1)}`,
+      `fps ${game.fps.toFixed(0)} dt ${lastDt.toFixed(3)}`,
+      `spd ${game.speed.toFixed(1)} steer ${(game.pos.x).toFixed(2)}`,
       `heat ${game.heat.toFixed(1)}`,
       `drift ${game.driftMeter.toFixed(1)}`,
       `boost ${game.boost.toFixed(1)}`,
-      `AI ${game.settings.enemyAI}`,
-      `qStates ${Object.keys(game.qtable).length}`,
+      `AI ${game.settings.enemyAI} enemies ${game.enemies.length}`,
+      `track ${TRACKS[game.mapIndex].id}`,
     ];
     lines.forEach((t, i) => ctx.fillText(t, 16, 26 + i * 14));
   }
@@ -899,7 +938,7 @@ InfernoDrift2 refactor plan:
     show(el('#gameoverOverlay'));
     hud.classList.add('hidden');
     el('#gameoverTitle').textContent = reason;
-    el('#gameoverStats').textContent = `Score ${game.score.toFixed(0)} · Lap ${game.lap} · Time ${game.time.toFixed(1)}s`;
+    el("#gameoverStats").textContent = `Score ${game.score.toFixed(0)} - Lap ${game.lap} - Time ${game.time.toFixed(1)}s`;
     updateBests(game.score);
   }
 
@@ -994,3 +1033,10 @@ InfernoDrift2 refactor plan:
   // kick off
   init();
 })();
+
+
+
+
+
+
+
