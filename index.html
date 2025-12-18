@@ -1,1022 +1,255 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Inferno Drift - Drift Survival</title>
-  <meta name="description" content="Inferno Drift is a high-speed, score-attack drift survival game built for desktop, tablet, and phone." />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap">
-  <style>
-    :root {
-      --bg: #050910;
-      --panel: rgba(10, 14, 24, 0.72);
-      --line: rgba(255, 255, 255, 0.12);
-      --fg: #f5f8ff;
-      --muted: #a6b4cd;
-      --accent: #ff5f6d;
-      --accent2: #6ef7c8;
-      --gold: #ffcc54;
-      --blue: #60a4ff;
-      --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
-      --card-radius: 18px;
-    }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; }
-    body {
-      margin: 0;
-      font-family: "Space Grotesk", system-ui, -apple-system, Segoe UI, sans-serif;
-      background: radial-gradient(1200px 800px at 72% -10%, #132144, transparent 55%), radial-gradient(1400px 900px at 20% 20%, #0f1a35, transparent 55%), #050910;
-      color: var(--fg);
-      overflow: hidden;
-    }
-    a { color: inherit; }
-    .grid { display: grid; gap: 14px; }
-    .screen { position: fixed; inset: 0; padding: 28px; }
-    .home {
-      display: grid;
-      grid-template-columns: 1.2fr 1fr;
-      gap: 28px;
-      max-width: 1200px;
-      margin: 0 auto;
-      align-items: center;
-    }
-    .hero {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: var(--card-radius);
-      padding: 22px 24px;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(14px);
-    }
-    .eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: rgba(255, 255, 255, 0.06);
-      padding: 8px 12px;
-      border-radius: 999px;
-      font-weight: 700;
-      letter-spacing: 0.6px;
-      text-transform: uppercase;
-      font-size: 12px;
-      color: var(--muted);
-    }
-    h1 {
-      margin: 14px 0 10px;
-      font-size: clamp(32px, 6vw, 48px);
-      letter-spacing: -0.4px;
-    }
-    .lede { color: var(--muted); max-width: 46ch; margin-bottom: 16px; line-height: 1.6; }
-    .pill-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0 6px; }
-    .pill {
-      border-radius: 999px;
-      border: 1px solid var(--line);
-      padding: 8px 14px;
-      background: rgba(255,255,255,0.04);
-      color: var(--muted);
-      font-weight: 600;
-      font-size: 13px;
-    }
-    .device-card {
-      background: linear-gradient(140deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
-      border: 1px solid var(--line);
-      border-radius: var(--card-radius);
-      padding: 16px;
-      cursor: pointer;
-      display: grid;
-      gap: 8px;
-      transition: transform .16s ease, border .16s ease, box-shadow .16s ease;
-    }
-    .device-card.active { border-color: rgba(255,255,255,0.35); box-shadow: 0 16px 50px rgba(0,0,0,0.42); transform: translateY(-1px); }
-    .device-name { font-weight: 800; font-size: 18px; }
-    .device-note { color: var(--muted); font-size: 14px; line-height: 1.5; }
-    .cta-row { display: flex; gap: 12px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
-    .btn {
-      border: none;
-      border-radius: 12px;
-      padding: 14px 18px;
-      font-weight: 800;
-      letter-spacing: 0.1px;
-      cursor: pointer;
-      color: #050910;
-      background: linear-gradient(120deg, #ff7a90, #ff5f6d);
-      box-shadow: 0 18px 40px rgba(255, 95, 109, 0.35);
-      transition: transform .1s ease, box-shadow .16s ease;
-    }
-    .btn.secondary { background: rgba(255,255,255,0.06); color: var(--fg); box-shadow: none; border: 1px solid var(--line); }
-    .btn:active { transform: translateY(1px); }
-    .side-panel {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: var(--card-radius);
-      padding: 18px;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(14px);
-      display: grid;
-      gap: 14px;
-    }
-    .side-panel h3 { margin: 0; font-size: 16px; letter-spacing: 0.1px; }
-    .bento { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
-    .micro { color: var(--muted); font-size: 13px; line-height: 1.5; }
-    .tag { color: var(--accent2); font-weight: 800; font-size: 13px; }
+  <meta charset="UTF-8" />
+  <title>Inferno Drift</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="description" content="Inferno Drift — fast-paced arcade drifting game." />
 
-    /* Game Shell */
-    #gameShell { display: none; flex-direction: column; gap: 12px; }
-    .game-wrap {
-      position: relative;
-      flex: 1;
-      min-height: 420px;
-      border: 1px solid var(--line);
-      border-radius: var(--card-radius);
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      color: #fff;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       overflow: hidden;
-      background: radial-gradient(900px 500px at 50% -10%, rgba(255,95,109,0.08), transparent 60%), linear-gradient(180deg, rgba(8,12,22,0.92), rgba(4,6,12,0.96));
-      box-shadow: var(--shadow);
     }
-    canvas { width: 100%; height: 100%; display: block; }
-    .hud {
-      pointer-events: none;
-      position: absolute;
+
+    canvas {
+      display: block;
+      margin: 0 auto;
+      outline: none;
+    }
+
+    #loading-screen {
+      position: fixed;
       inset: 0;
       display: flex;
-      flex-direction: column;
-      padding: 14px;
-      gap: 10px;
-    }
-    .hud-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-    .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: 0.2px; }
-    .brand-badge { background: rgba(255,255,255,0.08); padding: 6px 10px; border-radius: 10px; font-size: 13px; color: var(--muted); }
-    .heat-bar {
-      flex: 1;
-      height: 14px;
-      background: rgba(255,255,255,0.06);
-      border-radius: 999px;
-      overflow: hidden;
-      border: 1px solid var(--line);
-      position: relative;
-    }
-    .heat-fill {
-      position: absolute;
-      inset: 0;
-      width: 0%;
-      background: linear-gradient(90deg, #38f9d7, #ffb347, #ff5f6d);
-      box-shadow: 0 0 18px rgba(255, 95, 109, 0.55);
-      transition: width 0.08s ease;
-    }
-    .heat-label {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      justify-content: space-between;
       align-items: center;
-      padding: 0 10px;
-      font-weight: 700;
-      font-size: 12px;
-      color: #0d111b;
-      mix-blend-mode: screen;
-      text-shadow: 0 0 10px rgba(0,0,0,0.6);
+      justify-content: center;
+      background: #000;
+      z-index: 9999;
     }
-    .hud-right { display: flex; align-items: center; gap: 8px; }
-    .chip {
-      pointer-events: auto;
-      border-radius: 10px;
-      border: 1px solid var(--line);
+
+    #loading-box {
+      text-align: center;
+    }
+
+    #touch-joy {
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
       background: rgba(255,255,255,0.05);
-      padding: 8px 10px;
-      font-weight: 700;
-      font-size: 12px;
-      color: var(--muted);
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      cursor: pointer;
+      touch-action: none;
+      display: none;
+      z-index: 50;
     }
-    .chip input { accent-color: var(--accent); }
-    .hud-body { flex: 1; display: grid; grid-template-columns: 1.2fr 1fr; gap: 10px; align-items: flex-end; }
-    .panel {
-      pointer-events: none;
-      background: rgba(0, 0, 0, 0.25);
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 14px;
-      padding: 12px;
-      backdrop-filter: blur(10px);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
-    }
-    .panel h4 { margin: 0 0 4px; font-size: 14px; letter-spacing: 0.2px; }
-    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
-    .stat { display: grid; gap: 2px; }
-    .stat label { color: var(--muted); font-size: 12px; }
-    .stat .value { font-weight: 800; font-size: 18px; }
-    .feed { display: grid; gap: 6px; max-height: 120px; overflow: hidden; }
-    .feed-item { color: var(--muted); font-size: 13px; opacity: 0.85; }
-    .feed-item.positive { color: #7dfad0; }
-    .feed-item.warning { color: #ffb347; }
-    .feed-item.danger { color: #ff5f6d; }
-    .prompt {
+
+    #joy-thumb {
       position: absolute;
       left: 50%;
       top: 50%;
-      transform: translate(-50%, -50%);
-      pointer-events: none;
-      text-align: center;
-      font-weight: 800;
-      font-size: clamp(18px, 3vw, 26px);
-      text-shadow: 0 6px 22px rgba(0,0,0,0.55);
-    }
-    .touch-zone {
-      position: absolute;
-      bottom: 12px;
-      left: 12px;
-      right: 12px;
-      height: 120px;
-      display: grid;
-      grid-template-columns: 1fr 120px;
-      gap: 10px;
-      pointer-events: none;
-    }
-    .touch-pad {
-      pointer-events: auto;
-      border-radius: 14px;
-      border: 1px dashed rgba(255,255,255,0.2);
-      background: rgba(255,255,255,0.04);
-      position: relative;
-    }
-    .touch-thumb {
-      position: absolute;
-      width: 72px;
-      height: 72px;
-      background: rgba(255,255,255,0.12);
-      border: 1px solid rgba(255,255,255,0.25);
+      width: 44px;
+      height: 44px;
       border-radius: 50%;
-      top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      transition: transform .05s linear;
+      background: rgba(255,255,255,0.25);
     }
-    .touch-buttons {
-      display: grid;
-      grid-template-rows: repeat(2, 1fr);
-      gap: 10px;
-    }
-    .touch-btn {
-      pointer-events: auto;
-      border-radius: 14px;
-      border: 1px solid rgba(255,255,255,0.16);
-      background: linear-gradient(120deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
-      font-weight: 800;
+
+    #hud {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      text-align: right;
       font-size: 14px;
-      color: var(--fg);
-      display: grid;
-      place-items: center;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
-    }
-    .overlay {
-      position: absolute;
-      inset: 0;
-      display: grid;
-      place-items: center;
-      background: rgba(5, 9, 16, 0.75);
-      backdrop-filter: blur(10px);
-      z-index: 5;
-      padding: 16px;
-    }
-    .card {
-      background: #0a0f1c;
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 18px;
-      padding: 18px;
-      width: min(520px, 94vw);
-      box-shadow: var(--shadow);
-      display: grid;
-      gap: 10px;
-    }
-    .card h2 { margin: 0; }
-    .card .tip { color: var(--muted); line-height: 1.6; }
-    .card .statline { display: flex; gap: 12px; flex-wrap: wrap; }
-    .card .statline div { background: rgba(255,255,255,0.05); padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); }
-    .hidden { display: none !important; }
-    @media (max-width: 900px) {
-      .home { grid-template-columns: 1fr; padding: 18px; }
-      .screen { padding: 18px; }
-      .hud-body { grid-template-columns: 1fr; }
-      .touch-zone { height: 160px; grid-template-columns: 1fr; grid-template-rows: 1fr 100px; }
     }
   </style>
 </head>
+
 <body>
-  <div class="screen" id="homeScreen">
-    <div class="home">
-      <div class="hero">
-        <div class="eyebrow">New build - Drift Survival</div>
-        <h1>Inferno Drift</h1>
-        <div class="lede">High-speed, score-attack drifting where risk fuels reward. Build heat with precision slides, thread near-misses, trigger Overdrive, and chase a perfect run.</div>
-        <div class="pill-row">
-          <span class="pill">Endless track</span>
-          <span class="pill">Heat / Overdrive</span>
-          <span class="pill">Skill-first scoring</span>
-          <span class="pill">Desktop / iPad / Phone</span>
-        </div>
-        <div class="cta-row">
-          <button class="btn" id="startDesktop">Play Desktop</button>
-          <button class="btn secondary" id="startTablet">Play iPad</button>
-          <button class="btn secondary" id="startPhone">Play Phone</button>
-          <button class="btn secondary" id="openAbout">Design Notes</button>
-        </div>
-      </div>
-      <div class="side-panel">
-        <h3>Pick your device</h3>
-        <div class="bento" id="deviceGrid">
-          <div class="device-card active" data-device="desktop">
-            <div class="device-name">Desktop</div>
-            <div class="device-note">Keyboard analog steering, full HUD, FPS toggle.</div>
-          </div>
-          <div class="device-card" data-device="tablet">
-            <div class="device-name">iPad</div>
-            <div class="device-note">One-handed thumb pad, tilt-inspired drift, simplified HUD.</div>
-          </div>
-          <div class="device-card" data-device="phone">
-            <div class="device-name">Phone</div>
-            <div class="device-note">Compact controls, low-heat mode, fast restart.</div>
-          </div>
-        </div>
-        <div class="micro">Tip: tap once to enable audio. ESC returns to launcher. Screen shake, left-handed, and performance toggles live in the HUD.</div>
-      </div>
-    </div>
+
+<div id="loading-screen">
+  <div id="loading-box">
+    <div id="loading-text">Loading — 0%</div>
+    <progress id="loading-bar" value="0" max="100"></progress>
   </div>
+</div>
 
-  <div class="screen" id="gameShell">
-    <div class="game-wrap">
-      <canvas id="gameCanvas" width="1280" height="720"></canvas>
-      <div class="hud">
-        <div class="hud-top">
-          <div class="brand">
-            <div class="brand-badge">Inferno Drift</div>
-            <div class="tag" id="stateTag">Menu</div>
-          </div>
-          <div class="heat-bar">
-            <div class="heat-fill" id="heatFill"></div>
-            <div class="heat-label"><span>Heat</span><span id="heatValue">0%</span></div>
-          </div>
-          <div class="hud-right">
-            <label class="chip"><input type="checkbox" id="toggleShake" checked> Screen shake</label>
-            <label class="chip"><input type="checkbox" id="toggleFPS"> FPS</label>
-            <label class="chip"><input type="checkbox" id="toggleEffects" checked> FX</label>
-            <label class="chip"><input type="checkbox" id="toggleLeftHand"> Left-handed</label>
-            <button class="chip" id="pauseBtn">Pause</button>
-            <button class="chip" id="exitBtn">Exit</button>
-          </div>
-        </div>
-        <div class="hud-body">
-          <div class="panel">
-            <h4>Run stats</h4>
-            <div class="stat-grid">
-              <div class="stat"><label>Score</label><div class="value" id="scoreValue">0</div></div>
-              <div class="stat"><label>Speed</label><div class="value" id="speedValue">0</div></div>
-              <div class="stat"><label>Combo</label><div class="value" id="comboValue">x1.0</div></div>
-              <div class="stat"><label>Drift</label><div class="value" id="driftValue">0s</div></div>
-            </div>
-          </div>
-          <div class="panel">
-            <h4>Feed</h4>
-            <div class="feed" id="feed"></div>
-          </div>
-        </div>
-        <div class="prompt" id="prompt">Tap / Click to start</div>
-        <div class="touch-zone" id="touchZone">
-          <div class="touch-pad" id="touchPad">
-            <div class="touch-thumb" id="touchThumb"></div>
-          </div>
-          <div class="touch-buttons">
-            <div class="touch-btn" id="touchBrake">Drift</div>
-            <div class="touch-btn" id="touchBoost">Pulse</div>
-          </div>
-        </div>
-      </div>
-      <div class="overlay hidden" id="pauseOverlay">
-        <div class="card">
-          <h2>Paused</h2>
-          <div class="tip">Take a breath. Overdrive holds. Resume instantly.</div>
-          <div class="statline">
-            <div>Score: <strong id="pauseScore">0</strong></div>
-            <div>Combo: <strong id="pauseCombo">x1.0</strong></div>
-          </div>
-          <div class="cta-row">
-            <button class="btn" id="resumeBtn">Resume</button>
-            <button class="btn secondary" id="restartBtn">Restart</button>
-          </div>
-        </div>
-      </div>
-      <div class="overlay hidden" id="gameOverOverlay">
-        <div class="card">
-          <h2>Run over</h2>
-          <div class="tip" id="failReason">Crashed</div>
-          <div class="statline">
-            <div>Score: <strong id="finalScore">0</strong></div>
-            <div>Best Heat: <strong id="finalHeat">0%</strong></div>
-            <div>Longest Drift: <strong id="finalDrift">0s</strong></div>
-            <div>Near Miss Chain: <strong id="finalChain">0</strong></div>
-          </div>
-          <div class="tip" id="failTip">Stay in the mid-lane before walls, brake tap before slalom.</div>
-          <div class="cta-row">
-            <button class="btn" id="againBtn">One more run</button>
-            <button class="btn secondary" id="backBtn">Back to launcher</button>
-          </div>
-        </div>
-      </div>
-      <div class="overlay hidden" id="aboutOverlay">
-        <div class="card">
-          <h2>Design Snapshot</h2>
-          <div class="tip">
-            Drift-first controls. Heat rewards aggression. Near-miss chains spike multipliers. Overdrive is a short, violent burst - do not overcook or you will overheat. Hazards are patterned slaloms, walls, and shifts tied to speed and heat.
-          </div>
-          <div class="statline">
-            <div>States: MENU -> PLAYING -> OVERDRIVE -> PAUSED -> GAME OVER</div>
-            <div>Performance: mobile-first, optional FX, FPS toggle</div>
-            <div>Controls: keyboard or thumb pad, left-hand swap</div>
-          </div>
-      <div class="cta-row">
-        <button class="btn secondary" id="closeAbout">Close</button>
-      </div>
-    </div>
-  </div>
- </div>
+<canvas id="gameCanvas" tabindex="0"></canvas>
 
-  <script>
-  (() => {
-    const STATES = { MENU: 'MENU', PLAYING: 'PLAYING', OVERDRIVE: 'OVERDRIVE', PAUSED: 'PAUSED', GAME_OVER: 'GAME_OVER' };
-    const DEVICES = { desktop: 'desktop', tablet: 'tablet', phone: 'phone' };
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    let device = DEVICES.desktop;
-    let state = STATES.MENU;
-    let lastTime = 0;
-    let running = false;
+<div id="touch-joy">
+  <div id="joy-thumb"></div>
+</div>
 
-    const ui = {
-      home: document.getElementById('homeScreen'),
-      shell: document.getElementById('gameShell'),
-      stateTag: document.getElementById('stateTag'),
-      heatFill: document.getElementById('heatFill'),
-      heatValue: document.getElementById('heatValue'),
-      scoreValue: document.getElementById('scoreValue'),
-      speedValue: document.getElementById('speedValue'),
-      comboValue: document.getElementById('comboValue'),
-      driftValue: document.getElementById('driftValue'),
-      feed: document.getElementById('feed'),
-      prompt: document.getElementById('prompt'),
-      touchZone: document.getElementById('touchZone'),
-      touchPad: document.getElementById('touchPad'),
-      touchThumb: document.getElementById('touchThumb'),
-      touchBrake: document.getElementById('touchBrake'),
-      touchBoost: document.getElementById('touchBoost'),
-      pauseOverlay: document.getElementById('pauseOverlay'),
-      gameOverOverlay: document.getElementById('gameOverOverlay'),
-      aboutOverlay: document.getElementById('aboutOverlay'),
-      pauseScore: document.getElementById('pauseScore'),
-      pauseCombo: document.getElementById('pauseCombo'),
-      finalScore: document.getElementById('finalScore'),
-      finalHeat: document.getElementById('finalHeat'),
-      finalDrift: document.getElementById('finalDrift'),
-      finalChain: document.getElementById('finalChain'),
-      failReason: document.getElementById('failReason'),
-      failTip: document.getElementById('failTip'),
-      toggleShake: document.getElementById('toggleShake'),
-      toggleFPS: document.getElementById('toggleFPS'),
-      toggleEffects: document.getElementById('toggleEffects'),
-      toggleLeft: document.getElementById('toggleLeftHand'),
-      pauseBtn: document.getElementById('pauseBtn'),
-      exitBtn: document.getElementById('exitBtn'),
-      resumeBtn: document.getElementById('resumeBtn'),
-      restartBtn: document.getElementById('restartBtn'),
-      againBtn: document.getElementById('againBtn'),
-      backBtn: document.getElementById('backBtn')
-    };
+<div id="hud">
+  <div id="score">Score: 0</div>
+</div>
 
-    const config = {
-      baseSpeed: 24,
-      accel: 4,
-      maxSpeed: 96,
-      overdriveSpeed: 124,
-      steerRate: 3.6,
-      driftGrip: 0.85,
-      driftLoss: 0.992,
-      friction: 0.996,
-      laneWidth: 140,
-      roadWidth: 760,
-      heatGainDrift: 35,
-      heatGainNear: 20,
-      heatDecay: 14,
-      heatDecayCold: 22,
-      overdriveThreshold: 100,
-      overdriveDrain: 65,
-      overheatLimit: 115,
-      spawnBase: 1.4,
-      spawnMin: 0.52,
-      hazardSpeed: 1.0,
-      nearMissDist: 54,
-      collisionRadius: 34,
-      shakeIntensity: 12,
-      mobileScale: window.innerWidth < 820 ? 0.82 : 1
-    };
+<script>
+/* ==========================
+   Canvas + DPI handling
+========================== */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
 
-    const input = { steer: 0, targetSteer: 0, brake: false, pulse: false, touchActive: false, touchX: 0 };
+function resizeCanvas() {
+  const cssW = window.innerWidth;
+  const cssH = window.innerHeight;
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
 
-    const audio = {
-      ctx: null, engineOsc: null, engineGain: null, ready: false,
-      ensure() {
-        if (this.ctx) return;
-        try {
-          this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-          this.engineOsc = this.ctx.createOscillator();
-          this.engineGain = this.ctx.createGain();
-          this.engineOsc.type = 'sawtooth';
-          this.engineGain.gain.value = 0.0001;
-          this.engineOsc.connect(this.engineGain).connect(this.ctx.destination);
-          this.engineOsc.start();
-          this.ready = true;
-        } catch (err) { console.warn('Audio init failed', err); }
-      },
-      tone(freq = 380, dur = 0.18, vol = 0.06) {
-        if (!this.ctx) return;
-        const o = this.ctx.createOscillator();
-        const g = this.ctx.createGain();
-        o.type = 'square';
-        o.frequency.value = freq;
-        g.gain.value = vol;
-        o.connect(g).connect(this.ctx.destination);
-        o.start();
-        o.stop(this.ctx.currentTime + dur);
-      },
-      cueNear() { this.tone(720, 0.08, 0.05); },
-      cueOverdrive() { this.tone(240, 0.25, 0.08); this.tone(540, 0.3, 0.04); },
-      cueOverheat() { this.tone(120, 0.5, 0.12); },
-      cueFail() { this.tone(110, 0.8, 0.1); },
-      updateEngine(speed, heat) {
-        if (!this.ctx || !this.engineOsc) return;
-        const targetFreq = 120 + speed * 3 + heat * 0.8;
-        this.engineOsc.frequency.setTargetAtTime(targetFreq, this.ctx.currentTime, 0.08);
-        const g = 0.02 + Math.min(0.14, speed / 140 + heat / 220);
-        this.engineGain.gain.setTargetAtTime(g, this.ctx.currentTime, 0.08);
-      }
-    };
+  canvas.style.width = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+  canvas.width = Math.floor(cssW * dpr);
+  canvas.height = Math.floor(cssH * dpr);
 
-    const game = {
-      pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 },
-      angle: -Math.PI / 2, targetAngle: -Math.PI / 2,
-      speed: config.baseSpeed, targetSpeed: config.baseSpeed,
-      score: 0, combo: 1, driftTimer: 0, bestDrift: 0,
-      heat: 0, overdrive: 0, nearChain: 0, bestNear: 0,
-      spawnTimer: 0, hazards: [], particles: [],
-      shakeTime: 0, fps: 60, frames: 0, fpsTimer: 0,
-      reason: 'Crashed', tip: 'Brake tap before big slides. Smooth steering builds heat faster.'
-    };
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
 
-    function resetGame() {
-      game.pos.x = 0; game.pos.y = 0;
-      game.vel.x = 0; game.vel.y = -config.baseSpeed;
-      game.angle = -Math.PI / 2; game.targetAngle = game.angle;
-      game.speed = config.baseSpeed; game.targetSpeed = config.baseSpeed;
-      game.score = 0; game.combo = 1; game.driftTimer = 0; game.bestDrift = 0;
-      game.heat = 0; game.overdrive = 0; game.nearChain = 0; game.bestNear = 0;
-      game.spawnTimer = 0; game.hazards.length = 0; game.particles.length = 0;
-      game.shakeTime = 0; game.reason = 'Crashed';
-      ui.feed.innerHTML = '';
-      pushFeed('Slide to build heat. Near-miss to spike combo.', 'positive');
-      setState(STATES.PLAYING);
-    }
+window.addEventListener('resize', resizeCanvas, { passive: true });
+resizeCanvas();
 
-    function setState(next) {
-      state = next;
-      ui.stateTag.textContent = next === STATES.OVERDRIVE ? 'Overdrive' : next;
-      ui.stateTag.style.color = next === STATES.OVERDRIVE ? '#ff7a90' : '#6ef7c8';
-      if (next === STATES.PLAYING) {
-        ui.prompt.textContent = 'Drift for heat. Near-miss for multiplier.';
-        ui.prompt.style.display = 'block';
-        ui.gameOverOverlay.classList.add('hidden');
-        ui.pauseOverlay.classList.add('hidden');
-      } else if (next === STATES.OVERDRIVE) {
-        ui.prompt.textContent = 'OVERDRIVE - ride the chaos';
-        ui.prompt.style.display = 'block';
-        audio.cueOverdrive();
-      } else if (next === STATES.GAME_OVER) {
-        ui.prompt.style.display = 'none';
-        ui.gameOverOverlay.classList.remove('hidden');
-      } else if (next === STATES.PAUSED) {
-        ui.pauseOverlay.classList.remove('hidden');
-      }
-    }
+/* ==========================
+   Asset preloader (mock)
+========================== */
+const assets = {};
+const assetList = [
+  // Add real assets here if needed
+];
 
-    function pushFeed(text, tone = 'positive') {
-      const el = document.createElement('div');
-      el.className = 'feed-item ' + tone;
-      el.textContent = text;
-      ui.feed.prepend(el);
-      while (ui.feed.children.length > 6) ui.feed.lastChild.remove();
-    }
+function loadAssets(list) {
+  const total = Math.max(1, list.length);
+  let loaded = 0;
 
-    function resizeCanvas() {
-      const ratio = window.devicePixelRatio || 1;
-      const scale = config.mobileScale;
-      canvas.width = Math.floor(canvas.clientWidth * ratio * scale);
-      canvas.height = Math.floor(canvas.clientHeight * ratio * scale);
-      ctx.setTransform(ratio * scale, 0, 0, ratio * scale, 0, 0);
-    }
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-
-    function gameLoop(ts) {
-      if (!running) return;
-      const dt = Math.min(0.05, (ts - lastTime) / 1000 || 0);
-      lastTime = ts;
-      update(dt);
-      render();
-      requestAnimationFrame(gameLoop);
-    }
-
-    function update(dt) {
-      game.frames++;
-      game.fpsTimer += dt;
-      if (game.fpsTimer >= 0.25) {
-        game.fps = Math.round(game.frames / game.fpsTimer * 4) / 4;
-        game.frames = 0; game.fpsTimer = 0;
-      }
-      if (state === STATES.PAUSED || state === STATES.GAME_OVER || state === STATES.MENU) return;
-
-      const steerEase = 8;
-      input.steer += (input.targetSteer - input.steer) * Math.min(1, steerEase * dt);
-
-      const driftFactor = input.brake ? config.driftGrip * 0.6 : config.driftGrip;
-      game.targetAngle += input.steer * config.steerRate * dt;
-      const sin = Math.sin(game.targetAngle), cos = Math.cos(game.targetAngle);
-      const desired = { x: cos * game.speed, y: sin * game.speed };
-      game.vel.x = game.vel.x * driftFactor + desired.x * (1 - driftFactor);
-      game.vel.y = game.vel.y * driftFactor + desired.y * (1 - driftFactor);
-      game.vel.x *= config.friction; game.vel.y *= config.friction;
-      game.speed = Math.hypot(game.vel.x, game.vel.y);
-      const slipAngle = Math.atan2(game.vel.y, game.vel.x) - game.targetAngle;
-      const slip = Math.abs(slipAngle);
-      const forward = game.speed || 1;
-      game.pos.x += game.vel.x * dt;
-      game.pos.y += game.vel.y * dt;
-
-      const driftActive = slip > 0.08 && forward > 10;
-      if (driftActive) {
-        game.driftTimer += dt;
-        game.bestDrift = Math.max(game.bestDrift, game.driftTimer);
-        const driftScore = dt * forward * (1 + slip * 6) * game.combo;
-        game.score += driftScore;
-        game.heat = Math.min(config.overheatLimit, game.heat + dt * (config.heatGainDrift * slip));
-      } else {
-        game.driftTimer = 0;
-      }
-      const heatDecay = state === STATES.OVERDRIVE ? config.overdriveDrain : (device === DEVICES.phone ? config.heatDecayCold : config.heatDecay);
-      game.heat = Math.max(0, game.heat - heatDecay * dt);
-
-      if (state !== STATES.OVERDRIVE && game.heat >= config.overdriveThreshold) {
-        game.overdrive = 2.8;
-        game.combo = Math.max(game.combo, 2);
-        setState(STATES.OVERDRIVE);
-        game.heat = config.overdriveThreshold;
-        pushFeed('OVERDRIVE - Score x2, speed spiked.', 'warning');
-      }
-      if (state === STATES.OVERDRIVE) {
-        game.overdrive -= dt;
-        game.targetSpeed = config.overdriveSpeed;
-        if (game.overdrive <= 0) {
-          setState(STATES.PLAYING);
-          pushFeed('Overdrive cooled. Hold drifts to rebuild.', 'positive');
-        }
-      } else {
-        game.targetSpeed = Math.min(config.maxSpeed, config.baseSpeed + game.score * 0.002 + game.heat * 0.2);
-      }
-      if (game.heat >= config.overheatLimit && slip > 0.18) {
-        game.reason = 'Overheated - too wild during max heat.';
-        game.tip = 'Feather steering during Overdrive. Use pulse to realign.';
-        audio.cueOverheat();
-        crash();
-      }
-
-      game.speed += (game.targetSpeed - game.speed) * Math.min(1, config.accel * dt);
-      const dir = Math.atan2(game.vel.y, game.vel.x);
-      game.targetAngle += (dir - game.targetAngle) * 0.12;
-
-      game.spawnTimer -= dt;
-      const spawnRate = Math.max(config.spawnMin, config.spawnBase - game.score * 0.0004 - game.heat * 0.003);
-      if (game.spawnTimer <= 0) {
-        spawnPattern();
-        game.spawnTimer = spawnRate;
-      }
-      updateHazards(dt, forward, slip);
-      updateParticles(dt);
-
-      ui.heatFill.style.width = Math.min(100, game.heat) + '%';
-      ui.heatValue.textContent = Math.round(game.heat) + '%';
-      ui.scoreValue.textContent = Math.round(game.score).toLocaleString();
-      ui.speedValue.textContent = Math.round(game.speed);
-      ui.comboValue.textContent = 'x' + game.combo.toFixed(1);
-      ui.driftValue.textContent = game.driftTimer.toFixed(1) + 's';
-      ui.stateTag.title = ui.toggleFPS.checked ? 'FPS ' + game.fps : '';
-
-      audio.updateEngine(game.speed, game.heat);
-    }
-
-    function spawnPattern() {
-      const lanes = [-2, -1, 0, 1, 2];
-      const lane = (idx) => idx * config.laneWidth;
-      const speedFactor = 1 + Math.min(1.4, game.score / 20000 + game.heat / 80);
-      const pick = Math.random();
-      if (pick < 0.35) {
-        const count = 5;
-        for (let i = 0; i < count; i++) game.hazards.push(makeHazard(lane((i % 2 === 0) ? -1 : 1), -500 - i * 120, 90, 70, speedFactor, 'slalom'));
-      } else if (pick < 0.65) {
-        const gap = Math.floor(Math.random() * 3) - 1;
-        for (const l of lanes) {
-          if (l === gap) continue;
-          game.hazards.push(makeHazard(lane(l), -620, 120, 50, speedFactor * 1.05, 'wall'));
-        }
-      } else {
-        const shift = Math.random() < 0.5 ? -1 : 1;
-        for (let i = 0; i < 4; i++) game.hazards.push(makeHazard(lane(shift * (i - 1)), -400 - i * 120, 80, 60, speedFactor * 1.2, 'pulse'));
-      }
-    }
-
-    function makeHazard(x, y, w, h, s, type) {
-      return { x, y, w, h, speed: s * config.hazardSpeed, type, active: true, glow: type === 'pulse' };
-    }
-
-    function updateHazards(dt, forward, slip) {
-      const carX = game.pos.x;
-      const carY = game.pos.y;
-      for (const hz of game.hazards) {
-        hz.y += (forward + 30 * dt) * dt * 60 * 0.9 + hz.speed * 10 * dt;
-        if (!hz.active) continue;
-        const dx = hz.x - carX;
-        const dy = hz.y - carY + 240;
-        const near = Math.hypot(dx, dy);
-        if (Math.abs(dx) < hz.w / 2 + config.collisionRadius && Math.abs(dy) < hz.h / 2 + config.collisionRadius) {
-          game.reason = hz.type === 'wall' ? 'Slammed a wall.' : 'Clipped a hazard.';
-          game.tip = hz.type === 'slalom' ? 'Feather brake before slaloms; enter centered.' : 'Aim for mid-lane and pulse to reset drift.';
-          crash();
-          return;
-        }
-        if (near < config.nearMissDist && near > config.collisionRadius + 8) {
-          game.heat = Math.min(config.overheatLimit, game.heat + config.heatGainNear * dt * 20);
-          game.combo = Math.min(6, game.combo + 0.25);
-          game.score += 120 * game.combo;
-          game.nearChain++;
-          game.bestNear = Math.max(game.bestNear, game.nearChain);
-          hz.active = false;
-          pushFeed('Near miss +heat +combo', 'positive');
-          audio.cueNear();
-        }
-      }
-      game.hazards = game.hazards.filter(hz => hz.y < 900);
-      if (game.hazards.length > 40) game.hazards.length = 40;
-      if (!input.brake) game.nearChain = Math.max(0, game.nearChain - dt * 0.5);
-      if (!input.brake && slip < 0.05) game.combo = Math.max(1, game.combo - dt * 0.5);
-    }
-
-    function updateParticles(dt) {
-      for (const p of game.particles) {
-        p.t -= dt; p.x += p.vx * dt; p.y += p.vy * dt;
-      }
-      game.particles = game.particles.filter(p => p.t > 0);
-    }
-
-    function crash() {
-      if (state === STATES.GAME_OVER) return;
-      setState(STATES.GAME_OVER);
-      audio.cueFail();
-      game.shakeTime = 0.4;
-      ui.finalScore.textContent = Math.round(game.score).toLocaleString();
-      ui.finalHeat.textContent = Math.round(game.heat) + '%';
-      ui.finalDrift.textContent = game.bestDrift.toFixed(2) + 's';
-      ui.finalChain.textContent = game.bestNear;
-      ui.failReason.textContent = game.reason;
-      ui.failTip.textContent = game.tip;
-    }
-
-    function render() {
-      const w = canvas.width, h = canvas.height;
-      ctx.save();
-      ctx.clearRect(0, 0, w, h);
-      const shake = ui.toggleShake.checked ? game.shakeTime : 0;
-      const sx = shake > 0 ? (Math.random() - 0.5) * config.shakeIntensity : 0;
-      const sy = shake > 0 ? (Math.random() - 0.5) * config.shakeIntensity : 0;
-      if (game.shakeTime > 0) game.shakeTime = Math.max(0, game.shakeTime - 0.02);
-      ctx.translate(w / 2 + sx, h * 0.72 + sy);
-      drawTrack(w, h);
-      drawHazards();
-      drawCar();
-      drawParticles();
-      ctx.restore();
-    }
-
-    function drawTrack(w, h) {
-      ctx.save();
-      ctx.fillStyle = '#0b1221';
-      ctx.fillRect(-w, -h, w * 2, h * 2);
-      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-      ctx.lineWidth = 2;
-      const lines = 8;
-      for (let i = -lines; i <= lines; i++) {
-        ctx.beginPath();
-        ctx.moveTo(i * config.laneWidth, -h);
-        ctx.lineTo(i * config.laneWidth, h);
-        ctx.stroke();
-      }
-      const stripSpacing = 120;
-      ctx.lineWidth = 6;
-      ctx.strokeStyle = '#162744';
-      for (let y = -h; y < h; y += stripSpacing) {
-        ctx.beginPath();
-        ctx.moveTo(-config.roadWidth / 2, y);
-        ctx.lineTo(config.roadWidth / 2, y + 40);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-
-    function drawHazards() {
-      for (const hz of game.hazards) {
-        const alpha = hz.active ? 0.9 : 0.35;
-        const color = hz.type === 'wall' ? '#ff5f6d' : hz.type === 'pulse' ? '#6ef7c8' : '#ffd166';
-        ctx.fillStyle = color;
-        ctx.globalAlpha = alpha;
-        ctx.beginPath();
-        ctx.roundRect(hz.x - hz.w / 2, hz.y - hz.h / 2, hz.w, hz.h, 10);
-        ctx.fill();
-        if (hz.glow && ui.toggleEffects.checked) {
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-        ctx.globalAlpha = 1;
-      }
-    }
-
-    function drawCar() {
-      const size = 48;
-      ctx.save();
-      ctx.translate(game.pos.x, game.pos.y);
-      ctx.rotate(game.targetAngle + Math.PI / 2);
-      const heatGlow = Math.min(1, game.heat / config.overdriveThreshold);
-      const flare = ui.toggleEffects.checked ? 16 * heatGlow : 8;
-      const grad = ctx.createLinearGradient(-size / 2, -size, size / 2, size);
-      grad.addColorStop(0, '#1c2d4f');
-      grad.addColorStop(1, '#5ad0ff');
-      ctx.fillStyle = grad;
-      ctx.strokeStyle = '#9bd7ff';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.roundRect(-size / 2, -size, size, size * 1.5, 12);
-      ctx.fill();
-      ctx.stroke();
-      if (ui.toggleEffects.checked) {
-        ctx.fillStyle = 'rgba(255,95,109,' + (0.25 + heatGlow * 0.3) + ')';
-        ctx.beginPath();
-        ctx.ellipse(0, size * 0.8, flare, flare * 0.6, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-
-    function drawParticles() {
-      if (!ui.toggleEffects.checked) return;
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      for (const p of game.particles) {
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = p.t * 0.8;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-
-    const keys = {};
-    window.addEventListener('keydown', (e) => {
-      keys[e.key.toLowerCase()] = true;
-      if (e.key === 'Escape') {
-        if (state === STATES.PLAYING || state === STATES.OVERDRIVE) pause();
-        else backToMenu();
-      }
+  return Promise.all(list.map(src => {
+    return new Promise(res => {
+      const img = new Image();
+      img.onload = () => {
+        loaded++;
+        const pct = Math.round(loaded / total * 100);
+        document.getElementById('loading-bar').value = pct;
+        document.getElementById('loading-text').textContent = 'Loading — ' + pct + '%';
+        assets[src] = img;
+        res();
+      };
+      img.src = src;
     });
-    window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+  }));
+}
 
-    function readKeyboard() {
-      const left = keys['a'] || keys['arrowleft'];
-      const right = keys['d'] || keys['arrowright'];
-      const brake = keys['shift'] || keys[' '];
-      const pulseKey = keys['w'] || keys['arrowup'];
-      input.targetSteer = (left ? -1 : 0) + (right ? 1 : 0);
-      input.targetSteer *= device === DEVICES.desktop ? 1.0 : 0.75;
-      input.brake = brake;
-      input.pulse = pulseKey;
-    }
+/* ==========================
+   Input (keyboard + touch)
+========================== */
+const keys = {};
+window.addEventListener('keydown', e => keys[e.key] = true);
+window.addEventListener('keyup', e => keys[e.key] = false);
 
-    function setupTouch() {
-      const pad = ui.touchPad;
-      const thumb = ui.touchThumb;
-      const rect = () => pad.getBoundingClientRect();
-      function setThumb(x) { thumb.style.transform = 'translate(' + (x - 36) + 'px, -50%)'; }
-      pad.addEventListener('pointerdown', (e) => {
-        input.touchActive = true;
-        const r = rect();
-        input.touchX = e.clientX;
-        input.targetSteer = ((e.clientX - r.left) / r.width - 0.5) * 2;
-        setThumb((input.targetSteer * 0.4 + 0.5) * r.width);
-      });
-      window.addEventListener('pointermove', (e) => {
-        if (!input.touchActive) return;
-        const r = rect();
-        input.touchX = Math.max(r.left, Math.min(r.right, e.clientX));
-        input.targetSteer = ((input.touchX - r.left) / r.width - 0.5) * 2;
-        setThumb((input.targetSteer * 0.4 + 0.5) * r.width);
-      });
-      window.addEventListener('pointerup', () => { input.touchActive = false; input.targetSteer = 0; setThumb(rect().width / 2); });
-      ui.touchBrake.addEventListener('pointerdown', () => input.brake = true);
-      ui.touchBrake.addEventListener('pointerup', () => input.brake = false);
-      ui.touchBoost.addEventListener('pointerdown', () => { input.pulse = true; pulse(); });
-      ui.touchBoost.addEventListener('pointerup', () => input.pulse = false);
-    }
-    setupTouch();
+const joy = document.getElementById('touch-joy');
+const thumb = document.getElementById('joy-thumb');
+let joyVec = { x: 0, y: 0 };
 
-    function pulse() {
-      game.vel.x *= 0.7;
-      game.vel.y = Math.min(game.vel.y * 0.7, -20);
-      game.combo = Math.max(1, game.combo - 0.2);
-      pushFeed('Pulse: stabilize drift, reduce combo.', 'warning');
-    }
+function enableTouchControls() {
+  joy.style.display = 'block';
+}
 
-    function pause() {
-      if (state === STATES.GAME_OVER) return;
-      setState(STATES.PAUSED);
-      ui.pauseScore.textContent = Math.round(game.score).toLocaleString();
-      ui.pauseCombo.textContent = 'x' + game.combo.toFixed(1);
-    }
-    function resume() { ui.pauseOverlay.classList.add('hidden'); setState(STATES.PLAYING); }
-    function backToMenu() {
-      running = false;
-      state = STATES.MENU;
-      ui.home.style.display = 'block';
-      ui.shell.style.display = 'none';
-      ui.gameOverOverlay.classList.add('hidden');
-      ui.pauseOverlay.classList.add('hidden');
-    }
+function handleJoy(e, end=false) {
+  e.preventDefault();
+  if (end) {
+    joyVec.x = joyVec.y = 0;
+    thumb.style.transform = 'translate(-50%, -50%)';
+    return;
+  }
+  const t = e.touches[0];
+  const r = joy.getBoundingClientRect();
+  const dx = (t.clientX - (r.left + r.width/2)) / (r.width/2);
+  const dy = (t.clientY - (r.top + r.height/2)) / (r.height/2);
+  const len = Math.hypot(dx, dy) || 1;
+  joyVec.x = Math.max(-1, Math.min(1, dx / len));
+  joyVec.y = Math.max(-1, Math.min(1, dy / len));
+  thumb.style.left = (r.width/2 + joyVec.x * 40) + 'px';
+  thumb.style.top  = (r.height/2 + joyVec.y * 40) + 'px';
+}
 
-    function start(mode) {
-      device = mode;
-      audio.ensure();
-      ui.home.style.display = 'none';
-      ui.shell.style.display = 'flex';
-      ui.touchZone.style.display = (device === DEVICES.desktop) ? 'none' : 'grid';
-      resizeCanvas();
-      resetGame();
-      lastTime = performance.now();
-      if (!running) { running = true; requestAnimationFrame(gameLoop); }
-    }
+joy.addEventListener('touchstart', handleJoy, { passive:false });
+joy.addEventListener('touchmove', handleJoy, { passive:false });
+joy.addEventListener('touchend', e => handleJoy(e, true), { passive:false });
 
-    document.querySelectorAll('.device-card').forEach(card => {
-      card.addEventListener('click', () => {
-        document.querySelectorAll('.device-card').forEach(c => c.classList.remove('active'));
-        card.classList.add('active');
-        const d = card.dataset.device;
-        if (d === 'tablet') device = DEVICES.tablet;
-        else if (d === 'phone') device = DEVICES.phone;
-        else device = DEVICES.desktop;
-      });
-    });
-    document.getElementById('startDesktop').addEventListener('click', () => start(DEVICES.desktop));
-    document.getElementById('startTablet').addEventListener('click', () => start(DEVICES.tablet));
-    document.getElementById('startPhone').addEventListener('click', () => start(DEVICES.phone));
-    document.getElementById('openAbout').addEventListener('click', () => ui.aboutOverlay.classList.remove('hidden'));
-    document.getElementById('closeAbout').addEventListener('click', () => ui.aboutOverlay.classList.add('hidden'));
+if ('ontouchstart' in window) enableTouchControls();
 
-    ui.pauseBtn.addEventListener('click', pause);
-    ui.exitBtn.addEventListener('click', backToMenu);
-    ui.resumeBtn.addEventListener('click', resume);
-    ui.restartBtn.addEventListener('click', resetGame);
-    ui.againBtn.addEventListener('click', resetGame);
-    ui.backBtn.addEventListener('click', backToMenu);
-    ui.toggleLeft.addEventListener('change', () => {
-      ui.touchZone.style.flexDirection = ui.toggleLeft.checked ? 'row-reverse' : 'row';
-    });
+/* ==========================
+   Game state
+========================== */
+let score = 0;
+const player = {
+  x: 200,
+  y: 200,
+  vx: 0,
+  vy: 0,
+  speed: 400
+};
 
-    setInterval(() => { if (device === DEVICES.desktop) readKeyboard(); }, 16);
+/* ==========================
+   Game loop (delta time)
+========================== */
+let last = performance.now();
+let paused = false;
 
-    canvas.addEventListener('click', () => {
-      if (state === STATES.PLAYING || state === STATES.OVERDRIVE) return;
-      if (state === STATES.MENU) start(device);
-    });
+window.addEventListener('blur', () => paused = true);
+window.addEventListener('focus', () => {
+  paused = false;
+  last = performance.now();
+});
 
-    setInterval(() => {
-      if (state === STATES.PLAYING || state === STATES.OVERDRIVE) ui.prompt.style.opacity = ui.prompt.style.opacity === '0.4' ? '1' : '0.4';
-      else ui.prompt.style.opacity = '1';
-    }, 800);
+function update(dt) {
+  if (paused) return;
 
-    backToMenu();
-  })();
-  </script>
+  let ax = 0;
+  let ay = 0;
+
+  if (keys['ArrowLeft'] || keys['a']) ax -= 1;
+  if (keys['ArrowRight'] || keys['d']) ax += 1;
+  if (keys['ArrowUp'] || keys['w']) ay -= 1;
+  if (keys['ArrowDown'] || keys['s']) ay += 1;
+
+  ax += joyVec.x;
+  ay += joyVec.y;
+
+  player.vx = ax * player.speed;
+  player.vy = ay * player.speed;
+
+  player.x += player.vx * dt;
+  player.y += player.vy * dt;
+
+  score += dt * 10;
+  document.getElementById('score').textContent = 'Score: ' + Math.floor(score);
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = '#ff3b3b';
+  ctx.fillRect(player.x - 10, player.y - 10, 20, 20);
+}
+
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+/* ==========================
+   Start
+========================== */
+loadAssets(assetList).then(() => {
+  document.getElementById('loading-screen').style.display = 'none';
+  requestAnimationFrame(loop);
+});
+</script>
+
 </body>
 </html>
