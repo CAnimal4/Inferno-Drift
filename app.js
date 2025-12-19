@@ -12,23 +12,23 @@ InfernoDrift2 pseudo-3D racer (static, no build)
   /* Config */
   const CONFIG = {
     segmentLength: 18,
-    drawSegments: 200,
+    drawSegments: 210,
     roadWidth: 2200,
     cameraHeight: 1400,
     cameraDepth: 0.9,
-    accel: 130,
-    brake: 200,
-    offroad: 0.72,
-    maxSpeed: 280,
-    driftGain: 26,
-    boostForce: 520,
-    boostDrain: 32,
-    heatGain: 26,
-    heatCool: 22,
-    heatLava: 40,
+    accel: 140,
+    brake: 210,
+    offroad: 0.7,
+    maxSpeed: 300,
+    driftGain: 28,
+    boostForce: 540,
+    boostDrain: 34,
+    heatGain: 28,
+    heatCool: 24,
+    heatLava: 42,
     maxHeat: 100,
     comboWindow: 3,
-    pickupInterval: 7.5,
+    pickupInterval: 7.0,
     enemySpawnInterval: 6,
     fpsSmooth: 0.08,
     mlUpdateHz: 6,
@@ -136,6 +136,7 @@ InfernoDrift2 pseudo-3D racer (static, no build)
     track: null,
     pos: { x: 0, z: 0 },
     speed: 0,
+    lateral: 0,
     lap: 1,
     time: 0,
     score: 0,
@@ -352,8 +353,11 @@ InfernoDrift2 pseudo-3D racer (static, no build)
 
   function handlePlayer(input, dt) {
     const seg = findSegment(game.pos.z);
-    game.pos.x -= seg.curve * game.speed * dt * 0.0016;
-    game.pos.x += input.steer * dt * (1 + game.speed * 0.0025);
+    // curvature pull + steering with lateral inertia
+    game.lateral -= seg.curve * game.speed * dt * 0.0012;
+    game.lateral += input.steer * dt * (0.8 + game.speed * 0.0018);
+    game.lateral = clamp(game.lateral, -1.8, 1.8);
+    game.pos.x = game.lateral;
     if (input.accel) game.speed += CONFIG.accel * dt;
     if (input.brake) game.speed -= CONFIG.brake * dt;
     if (!input.accel && !input.brake) game.speed -= CONFIG.accel * 0.4 * dt;
@@ -453,6 +457,13 @@ InfernoDrift2 pseudo-3D racer (static, no build)
     return r;
   }
 
+  function bump(type) {
+    game.combo = Math.max(1, game.combo - 0.4);
+    game.camera.shake = Math.min(14, game.camera.shake + (type === 'enemy' ? 9 : 4));
+    playTone(220, 0.05, 0.1);
+    spawnSparks();
+  }
+
   /* Pickups */
   function updatePickups(dt) {
     for (const p of game.pickups) {
@@ -480,7 +491,18 @@ InfernoDrift2 pseudo-3D racer (static, no build)
   /* Particles */
   function addSmoke() { if (!QUALITY[game.settings.gfx].particles) return; game.particles.push({ life: 0.5, max: 0.5, kind: 'smoke' }); }
   function addFlare() { if (!QUALITY[game.settings.gfx].particles) return; game.particles.push({ life: 0.4, max: 0.4, kind: 'flare' }); }
-  function updateParticles(dt) { for (let i = game.particles.length - 1; i >= 0; i--) { game.particles[i].life -= dt; if (game.particles[i].life <= 0) game.particles.splice(i, 1); } }
+  function spawnSparks() {
+    if (!QUALITY[game.settings.gfx].particles) return;
+    for (let i = 0; i < 8; i++) game.particles.push({ life: 0.3, max: 0.3, kind: 'spark', x: viewW / 2, y: viewH * 0.75, vx: rand(2) - 1, vy: -rand(2) });
+  }
+  function updateParticles(dt) {
+    for (let i = game.particles.length - 1; i >= 0; i--) {
+      const p = game.particles[i];
+      p.life -= dt;
+      if (p.life <= 0) { game.particles.splice(i, 1); continue; }
+      if (p.kind === 'spark') { p.vy += 4 * dt; p.x += p.vx * 60 * dt; p.y += p.vy * 60 * dt; }
+    }
+  }
 
   /* Laps */
   function handleLap() {
@@ -510,7 +532,17 @@ InfernoDrift2 pseudo-3D racer (static, no build)
     const w = viewW, h = viewH;
     ctx.setTransform(viewScale, 0, 0, viewScale, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#05070f';
+    // sky & horizon glow
+    const sky = ctx.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, '#0a0f1f');
+    sky.addColorStop(0.45, '#0d1022');
+    sky.addColorStop(1, '#05070f');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+    const glow = ctx.createRadialGradient(w / 2, h * 0.35, 20, w / 2, h * 0.35, h * 0.6);
+    glow.addColorStop(0, 'rgba(124,240,216,0.15)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
     ctx.fillRect(0, 0, w, h);
     renderRoad(w, h);
     renderPickups(w, h);
@@ -567,6 +599,9 @@ InfernoDrift2 pseudo-3D racer (static, no build)
 
   function renderPlayer(w, h) {
     const carW = 36, carH = 70, x = w / 2, y = h * 0.72;
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.beginPath(); ctx.ellipse(x, y + carH * 0.35, carW * 0.6, carH * 0.2, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#45f0b6'; roundRect(x - carW / 2, y - carH / 2, carW, carH, 10, true);
     ctx.fillStyle = '#0c1320'; ctx.fillRect(x - carW * 0.35, y - carH * 0.35, carW * 0.7, carH * 0.7);
     if (QUALITY[game.settings.gfx].lines && game.speed > 140) { ctx.strokeStyle = 'rgba(69,240,182,0.3)'; ctx.beginPath(); ctx.moveTo(x, y + carH / 2); ctx.lineTo(x, y + carH / 2 + 30); ctx.stroke(); }
@@ -578,8 +613,11 @@ InfernoDrift2 pseudo-3D racer (static, no build)
       const seg = findSegment(e.z);
       const p = project(e.lane * CONFIG.roadWidth, seg.y, e.z - game.pos.z, cam, w, h); if (!p) continue;
       const s = 26 * p.scale * 40;
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.beginPath(); ctx.ellipse(p.x, p.y + s * 0.4, s * 0.6, s * 0.2, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = e.type === 'blocker' ? '#ff9f40' : e.type === 'opportunist' ? '#7bdcff' : '#f5597b';
       roundRect(p.x - s * 0.5, p.y - s, s, s * 1.4, 6, true);
+      if (game.debug) { ctx.fillStyle = '#fff'; ctx.fillRect(p.x, p.y, 2, 2); }
     }
   }
 
@@ -611,8 +649,16 @@ InfernoDrift2 pseudo-3D racer (static, no build)
     if (!QUALITY[game.settings.gfx].particles) return;
     for (const p of game.particles) {
       const alpha = p.life / p.max;
-      ctx.fillStyle = p.kind === 'smoke' ? `rgba(255,255,255,${alpha * 0.2})` : `rgba(255,140,90,${alpha * 0.4})`;
-      ctx.beginPath(); ctx.arc(w / 2 + rand(10) - 5, h * 0.8 + rand(6) - 3, 8 * alpha, 0, Math.PI * 2); ctx.fill();
+      if (p.kind === 'spark') {
+        ctx.strokeStyle = `rgba(255,200,120,${alpha * 0.8})`;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x + p.vx * 8, p.y + p.vy * 8);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = p.kind === 'smoke' ? `rgba(255,255,255,${alpha * 0.2})` : `rgba(255,140,90,${alpha * 0.4})`;
+        ctx.beginPath(); ctx.arc(w / 2 + rand(10) - 5, h * 0.8 + rand(6) - 3, 8 * alpha, 0, Math.PI * 2); ctx.fill();
+      }
     }
   }
 
