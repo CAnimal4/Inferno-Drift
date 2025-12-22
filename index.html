@@ -119,6 +119,14 @@
           <button class="touch-btn" id="touchBoost">Boost</button>
         </div>
       </div>
+
+      <div id="focusGate" class="focus-gate hidden">
+        <div class="focus-card">
+          <div class="eyebrow">Click or tap</div>
+          <h3>Focus to drive</h3>
+          <div class="muted tiny">Press F for fullscreen · ~ for debug</div>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -215,6 +223,17 @@
       </div>
       <div class="overlay-actions">
         <button id="closeHelp" class="primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="errorOverlay" class="overlay hidden">
+    <div class="overlay-box">
+      <div class="eyebrow">Error</div>
+      <h2 id="errorTitle">Load error</h2>
+      <p id="errorBody" class="muted tiny"></p>
+      <div class="overlay-actions">
+        <button id="errorClose" class="primary">Close</button>
       </div>
     </div>
   </div>

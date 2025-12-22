@@ -179,6 +179,11 @@ button:disabled { opacity:0.4; cursor:not-allowed; }
 .touch-buttons { display:flex; flex-direction:column; gap:8px; align-items:flex-end; pointer-events:auto; }
 .touch-btn { background:rgba(255,255,255,0.08); padding:12px 18px; min-width:88px; }
 
+.focus-gate { position:fixed; inset:0; display:grid; place-items:center; background:rgba(5,7,12,0.72); backdrop-filter:blur(10px); z-index:40; }
+.focus-card { background:var(--panel); border:1px solid var(--line); padding:16px 18px; border-radius:12px; box-shadow:var(--glow); text-align:center; }
+.focus-card h3 { margin:6px 0 4px; font-family:'Rajdhani', sans-serif; }
+.focus-gate.hidden { display:none !important; }
+
 .overlay {
   position:fixed; inset:0; display:grid; place-items:center; background:rgba(5,7,12,0.78); backdrop-filter:blur(12px); z-index:50;
 }
