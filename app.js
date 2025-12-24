@@ -12,6 +12,11 @@ BASELINE AUDIT (before fixes):
 - Canvas/DPR: single resize path with DPR clamp.
 - Gameplay: previous track-based lane system prevented steering; replaced with free-move yaw/velocity model and pursuit AI.
 */
+/* CURRENT AUDIT:
+- Speed: computed in update() via forward/back accel (CFG.accel/brake) with drag/coast, capped by CFG.maxSpeed; no throttle curve so top speed arrives too fast. dt clamped in tick() with CFG.dtMax.
+- Steering: steer input from readInput() -> yawVel/yaw in update(); forward vector = sin(yaw)/cos(yaw). Sign needs correction (reported reversed) plus a sanity assertion; touch uses same axis.
+- HUD: updateHUD() sets DOM textContent for #hud* cards (not canvas). Blur likely from CSS smoothing/scale; HUD is absolutely positioned overlay. Will add crisp text rendering and avoid transforms/fractional scaling.
+*/
 
 (() => {
   'use strict';
@@ -24,22 +29,23 @@ BASELINE AUDIT (before fixes):
   /* Config */
   const CFG = {
     dtMax: 0.05,
-    accel: 230,
-    brake: 260,
-    drag: 0.14,
-    coastDrag: 0.08,
-    steer: 2.2,
-    steerDrift: 3.0,
-    lateralDamp: 7,
-    driftGain: 30,
-    boostGain: 0.75,
-    boostForce: 620,
-    boostDrain: 40,
-    boostImpulse: 140,
-    maxSpeed: 360,
-    offroadPenalty: 0.5,
-    heatGainDrift: 20,
-    heatGainBoost: 28,
+    maxSpeed: 230,
+    accel: 180,
+    brake: 280,
+    drag: 0.18,
+    coastDrag: 0.12,
+    lateralGrip: 7.5,
+    driftGrip: 3.5,
+    steer: 2.4,
+    steerDrift: 3.4,
+    throttleCurve: 2.1,
+    boostPower: 420,
+    boostDrain: 32,
+    boostImpulse: 90,
+    boostGain: 0.8,
+    maxHeat: 100,
+    heatGainDrift: 22,
+    heatGainBoost: 30,
     heatGainHazard: 55,
     heatCool: 16,
     overheatDuration: 2.8,
@@ -176,6 +182,9 @@ BASELINE AUDIT (before fixes):
     mod: defaultMods(),
     autopilotTime: 0,
     focusCaptured: false,
+    steerInput: 0,
+    lastDt: 0,
+    shake: 0,
   };
 
   /* Boot */
@@ -253,8 +262,9 @@ BASELINE AUDIT (before fixes):
   }
 
   function loadSettings() {
-    try { return { sound: 'on', gfx: 'high', controls: 'wasd', enemyAI: 'standard', ...(JSON.parse(localStorage.getItem(STORAGE_KEYS.settings)) || {}) }; }
-    catch { return { sound: 'on', gfx: 'high', controls: 'wasd', enemyAI: 'standard' }; }
+    const base = { sound: 'on', gfx: 'high', controls: 'wasd', enemyAI: 'standard', speedScale: 1 };
+    try { return { ...base, ...(JSON.parse(localStorage.getItem(STORAGE_KEYS.settings)) || {}) }; }
+    catch { return base; }
   }
   function saveSettings() { localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(game.settings)); }
   function loadScores() { try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.scores)) || {}; } catch { return {}; } }
@@ -340,12 +350,14 @@ BASELINE AUDIT (before fixes):
       document.querySelector('#settingSound').value = game.settings.sound;
       document.querySelector('#settingGfx').value = game.settings.gfx;
       document.querySelector('#settingControls').value = game.settings.controls;
+      const scaleSel = document.querySelector('#settingSpeedScale'); if (scaleSel) scaleSel.value = String(game.settings.speedScale ?? 1);
       show(ui.settingsOverlay);
     });
     document.querySelector('#closeSettings').addEventListener('click', () => {
       game.settings.sound = document.querySelector('#settingSound').value;
       game.settings.gfx = document.querySelector('#settingGfx').value;
       game.settings.controls = document.querySelector('#settingControls').value;
+      const scaleSel = document.querySelector('#settingSpeedScale'); if (scaleSel) game.settings.speedScale = Number(scaleSel.value || 1);
       saveSettings();
       hide(ui.settingsOverlay);
     });
@@ -444,6 +456,7 @@ BASELINE AUDIT (before fixes):
     game.yaw = 0; game.yawVel = 0;
     game.speed = 0; game.drift = 0; game.boost = 0; game.boostPulse = 0; game.heat = 0; game.overheat = 0; game.combo = 1; game.comboTimer = 0; game.score = 0; game.runTime = 0;
     game.pickupTimer = CFG.pickupInterval; game.rivalTimer = CFG.rivalInterval; game.autopilotTime = 0;
+    game.shake = 0; game.lastDt = 0; game.steerInput = 0;
     game.mod = defaultMods();
     if (game.perk) applyPerk(game.perk);
     buildArena(game.map);
@@ -530,8 +543,12 @@ BASELINE AUDIT (before fixes):
     const right = scheme === 'arrows' ? 'arrowright' : 'd';
     const up = scheme === 'arrows' ? 'arrowup' : 'w';
     const down = scheme === 'arrows' ? 'arrowdown' : 's';
+    const leftDown = keys[left] || touch.left;
+    const rightDown = keys[right] || touch.right;
     return {
-      steer: (keys[left] || touch.left ? -1 : 0) + (keys[right] || touch.right ? 1 : 0),
+      steer: (leftDown ? -1 : 0) + (rightDown ? 1 : 0),
+      left: leftDown,
+      right: rightDown,
       accel: keys[up] || touch.accel || false,
       brake: keys[down] || false,
       drift: keys[' '] || touch.drift || false,
@@ -543,6 +560,8 @@ BASELINE AUDIT (before fixes):
     game.autopilotTime += dt;
     return {
       steer: Math.sin(game.autopilotTime * 0.7) * 0.8,
+      left: false,
+      right: false,
       accel: true,
       brake: false,
       drift: Math.sin(game.autopilotTime * 1.3) > 0.65,
@@ -554,33 +573,49 @@ BASELINE AUDIT (before fixes):
   function update(dt) {
     const input = game.state === 'attract' ? autoInput(dt) : readInput();
     game.runTime += dt;
+    game.lastDt = dt;
     game.fps = game.fps ? lerp(game.fps, 1 / dt, 0.08) : 1 / dt;
 
     const forward = new THREE.Vector3(Math.sin(game.yaw), 0, Math.cos(game.yaw));
     const right = new THREE.Vector3(forward.z, 0, -forward.x);
 
-    if (input.accel) game.vel.addScaledVector(forward, CFG.accel * dt);
+    const speedScale = Number(game.settings.speedScale || 1);
+    const maxSpeed = CFG.maxSpeed * speedScale * (game.overheat > 0 ? 0.65 : 1);
+    const boostCap = maxSpeed * 1.25;
+    const speedRatio = clamp(game.speed / Math.max(1, maxSpeed), 0, 1);
+
+    const steerInput = input.steer;
+    game.steerInput = steerInput;
+    if (input.left) console.assert(!(steerInput > -0.001), 'Steering sanity: left should be negative');
+
+    const throttleCurve = 1 - Math.pow(speedRatio, CFG.throttleCurve);
+    const effAccel = CFG.accel * throttleCurve * (game.overheat > 0 ? 0.7 : 1);
+    if (input.accel) game.vel.addScaledVector(forward, effAccel * dt);
     if (input.brake) game.vel.addScaledVector(forward, -CFG.brake * dt);
 
-    const steerRate = (input.drift ? CFG.steerDrift : CFG.steer) * (game.overheat > 0 ? 0.6 : 1) * game.mod.grip * (0.8 + game.speed / CFG.maxSpeed);
-    game.yawVel = lerp(game.yawVel, input.steer * steerRate, dt * 8);
+    const steerGrip = input.drift ? CFG.driftGrip : CFG.lateralGrip;
+    const steerRate = (input.drift ? CFG.steerDrift : CFG.steer) * (0.55 + (1 - speedRatio) * 0.6);
+    game.yawVel = lerp(game.yawVel, steerInput * steerRate, dt * (input.drift ? 6 : 8));
     game.yaw += game.yawVel * dt;
 
     const fSpeed = game.vel.dot(forward);
     let side = game.vel.dot(right);
-    side = lerp(side, 0, dt * CFG.lateralDamp);
+    side = lerp(side, 0, dt * steerGrip);
     game.vel.copy(forward.clone().multiplyScalar(fSpeed)).add(right.clone().multiplyScalar(side));
 
-    const baseDrag = CFG.drag + (input.accel ? 0 : CFG.coastDrag);
+    let baseDrag = CFG.drag + (input.accel ? 0 : CFG.coastDrag);
+    if (game.overheat > 0) baseDrag *= 1.25;
     game.vel.multiplyScalar(Math.max(0, 1 - baseDrag * dt));
     game.speed = game.vel.length();
-    game.speed = clamp(game.speed, 0, CFG.maxSpeed * 1.35);
+    if (game.speed > boostCap) game.vel.setLength(boostCap);
+    game.speed = game.vel.length();
 
     if (input.drift) {
       game.drift = clamp(game.drift + CFG.driftGain * dt, 0, 100);
       game.speed *= 0.995;
       game.heat += CFG.heatGainDrift * dt;
       game.drifting = true;
+      if (game.drift > 25) { addCombo(0.05 * dt); game.score += 3 * dt; }
     } else if (game.drifting) {
       if (game.drift > 5) {
         const gain = game.drift * CFG.boostGain * game.mod.boostGain;
@@ -593,22 +628,25 @@ BASELINE AUDIT (before fixes):
     }
 
     if (input.boost && game.boost > 0) {
-      game.vel.addScaledVector(forward, CFG.boostForce * dt);
+      game.vel.addScaledVector(forward, CFG.boostPower * dt);
       game.boost = clamp(game.boost - CFG.boostDrain * dt * game.mod.boostDrain, 0, 140);
       game.heat += CFG.heatGainBoost * dt;
+      game.shake = Math.max(game.shake, 0.35);
     }
-    if (game.boostPulse > 0) { game.vel.addScaledVector(forward, CFG.boostImpulse * dt); game.boostPulse -= dt; }
+    if (game.boostPulse > 0) { game.vel.addScaledVector(forward, CFG.boostImpulse * dt); game.boostPulse -= dt; game.shake = Math.max(game.shake, 0.25); }
 
     game.pos.addScaledVector(game.vel, dt);
     clampToArena(game.map, game.pos, game.vel);
 
     applyHazards(dt, game.pos);
-    applyBoostPads(dt, game.pos, forward);
+    applyBoostPads(game.pos, forward);
     applyHeat(dt);
 
     game.comboTimer = Math.max(0, game.comboTimer - dt);
     if (game.comboTimer <= 0) game.combo = Math.max(1, game.combo - 0.2 * dt);
-    game.score += (game.speed * 0.08 + (input.drift ? 4 : 0)) * dt * game.combo;
+    game.score += (game.speed * 0.06 + (input.drift ? 3 : 0)) * dt * game.combo;
+
+    game.shake = Math.max(0, game.shake - dt * 1.6);
 
     updatePickups(dt);
     updateRivals(dt);
@@ -626,6 +664,7 @@ BASELINE AUDIT (before fixes):
       const ref = vel.clone().reflect(dir);
       vel.copy(ref.multiplyScalar(CFG.arenaBounce));
       game.heat += 6;
+      game.shake = Math.max(game.shake, 0.5);
       bounced = true;
     }
     if (bounced && game.mod.shield) game.mod.shield = false;
@@ -641,24 +680,25 @@ BASELINE AUDIT (before fixes):
     });
   }
 
-  function applyBoostPads(dt, pos, forward) {
+  function applyBoostPads(pos, forward) {
     game.map.boosts?.forEach(b => {
       const d2 = (pos.x - b.x) ** 2 + (pos.z - b.z) ** 2;
       if (d2 < b.r * b.r) {
-        game.boost = clamp(game.boost + 16 * dt, 0, 140);
-        game.vel.addScaledVector(forward, CFG.boostForce * 0.35 * dt);
+        game.boost = clamp(game.boost + 16 * game.lastDt, 0, 140);
+        game.vel.addScaledVector(forward, CFG.boostPower * 0.28 * game.lastDt);
+        game.shake = Math.max(game.shake, 0.18);
       }
     });
   }
 
   function applyHeat(dt) {
     if (game.overheat > 0) game.overheat = Math.max(0, game.overheat - dt);
-    game.heat = clamp(game.heat - CFG.heatCool * dt * game.mod.coolRate, 0, 100);
-    if (game.heat >= 100 && game.overheat <= 0) {
+    game.heat = clamp(game.heat - CFG.heatCool * dt * game.mod.coolRate, 0, CFG.maxHeat);
+    if (game.heat >= CFG.maxHeat && game.overheat <= 0) {
       game.overheat = CFG.overheatDuration;
+      game.heat = CFG.maxHeat;
       playTone(180, 0.1, 0.12);
-      setToast('Overheat! Grip down');
-      endRun('Overheated');
+      setToast('Overheat! Limp mode');
     }
   }
 
@@ -675,9 +715,17 @@ BASELINE AUDIT (before fixes):
       .addScaledVector(forward, -CFG.cameraBack)
       .addScaledVector(right, 0.4)
       .add(new THREE.Vector3(0, CFG.cameraHeight, 0));
+    if (game.shake > 0) {
+      target.add(new THREE.Vector3(
+        (Math.random() - 0.5) * game.shake,
+        (Math.random() - 0.5) * game.shake * 0.5,
+        (Math.random() - 0.5) * game.shake
+      ));
+    }
     camera.position.lerp(target, CFG.cameraLag);
     camera.lookAt(game.pos.x, game.pos.y + 1.2, game.pos.z);
-    camera.fov = lerp(camera.fov, CFG.fovBase + (game.speed / CFG.maxSpeed) * CFG.fovBoost, 0.12);
+    const speedNorm = clamp(game.speed / (CFG.maxSpeed * (Number(game.settings.speedScale || 1))), 0, 1);
+    camera.fov = lerp(camera.fov, CFG.fovBase + speedNorm * CFG.fovBoost, 0.12);
     camera.updateProjectionMatrix();
   }
 
@@ -744,7 +792,7 @@ BASELINE AUDIT (before fixes):
     const r = game.map.size * (0.4 + Math.random() * 0.4);
     const pos = new THREE.Vector3(Math.cos(ang) * r, 0, Math.sin(ang) * r);
     const type = pick(['racer', 'blocker', 'hunter']);
-    activeRivals.push({ pos, vel: new THREE.Vector3(), yaw: Math.random() * Math.PI * 2, speed: 0, mesh, type });
+    activeRivals.push({ pos, vel: new THREE.Vector3(), yaw: Math.random() * Math.PI * 2, speed: 0, mesh, type, nearCd: 0 });
   }
 
   function updateRivals(dt) {
@@ -756,19 +804,21 @@ BASELINE AUDIT (before fixes):
       const dir = toPlayer.clone().normalize();
       const side = new THREE.Vector3(dir.z, 0, -dir.x);
       let laneOffset = 0;
-      if (r.type === 'blocker') laneOffset = Math.sin(game.runTime * 1.8 + i) * 0.6;
-      if (r.type === 'hunter') laneOffset = Math.sin(game.runTime * 3 + i) * 0.2;
+      if (r.type === 'blocker') laneOffset = Math.sin(game.runTime * 1.4 + i) * 0.45;
+      if (r.type === 'hunter') laneOffset = Math.sin(game.runTime * 2.6 + i) * 0.25;
       const desiredDir = dir.clone().addScaledVector(side, laneOffset).normalize();
       r.vel.addScaledVector(desiredDir, (120 + Math.random() * 30) * dt);
       r.vel.multiplyScalar(Math.max(0, 1 - 0.12 * dt));
-      r.speed = clamp(r.vel.length(), 40, CFG.maxSpeed * 0.9);
+      r.speed = clamp(r.vel.length(), 40, CFG.maxSpeed * 0.82);
       r.pos.addScaledVector(r.vel, dt);
       clampToArena(game.map, r.pos, r.vel);
       r.yaw = Math.atan2(r.vel.x, r.vel.z);
       r.mesh.position.copy(r.pos); r.mesh.position.y = 0.55;
       r.mesh.rotation.y = r.yaw;
 
+      r.nearCd = Math.max(0, (r.nearCd || 0) - dt);
       const dz = game.pos.clone().sub(r.pos).length();
+      if (dz > 3 && dz < 8 && r.nearCd <= 0) { addCombo(0.12); game.score += 18; r.nearCd = 1; }
       if (dz < 3) {
         if (game.mod.shield) { game.mod.shield = false; setToast('Shield broke'); playTone(260, 0.06, 0.1); }
         else { bump(); }
@@ -782,6 +832,7 @@ BASELINE AUDIT (before fixes):
     game.heat += 8;
     addCombo(-0.5);
     playTone(220, 0.08, 0.14);
+    game.shake = Math.max(game.shake, 0.6);
   }
 
   function addCombo(v) { game.combo = clamp(game.combo + v, 1, 9); game.comboTimer = 3; }
@@ -792,9 +843,10 @@ BASELINE AUDIT (before fixes):
     if (game.debug) {
       debugBox.style.display = 'block';
       debugBox.textContent = [
-        `fps ${game.fps.toFixed(0)} dt ${(game.fps ? 1 / game.fps : 0).toFixed(3)}`,
-        `spd ${game.speed.toFixed(1)} heat ${game.heat.toFixed(1)} drift ${game.drift.toFixed(1)} boost ${game.boost.toFixed(1)}`,
-        `pos ${game.pos.x.toFixed(1)},${game.pos.z.toFixed(1)} combo x${game.combo.toFixed(1)}`,
+        `fps ${game.fps.toFixed(0)} dt ${game.lastDt.toFixed(3)}`,
+        `spd ${game.speed.toFixed(1)} steer ${game.steerInput.toFixed(2)} drifting ${game.drifting ? 'Y' : 'N'} shake ${game.shake.toFixed(2)}`,
+        `drift ${game.drift.toFixed(1)} heat ${game.heat.toFixed(1)} boost ${game.boost.toFixed(1)} combo x${game.combo.toFixed(1)}`,
+        `score ${game.score.toFixed(0)} pos ${game.pos.x.toFixed(1)},${game.pos.z.toFixed(1)}`,
         `map ${MAPS[game.mapIndex].id} rivals ${activeRivals.length} pickups ${activePickups.length}`,
       ].join('\\n');
     } else debugBox.style.display = 'none';
