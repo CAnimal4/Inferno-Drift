@@ -1,11 +1,11 @@
-/*
-InfernoDrift2 — static Three.js open-arena racer (no build)
-Run: any static server (e.g. `python -m http.server`) then open http://localhost:8000
-Controls: Desktop W/A/S/D or Arrows throttle/steer, Space drift (charge), Shift boost, F fullscreen, Esc pause, ~ debug.
-Mobile: steer with left pad, Drift hold then Boost tap (also accelerates), pause via on-screen button.
-Maps: see MAPS; each is an arena {size, hazards[], boosts[], props[]} and preview is auto-drawn. Add entries to MAPS to create more arenas.
+﻿/*
+InfernoDrift2 -- static Three.js open-arena racer (no build)
+Run: `python -m http.server` then open http://localhost:8000
+Controls (desktop): W/Up throttle, S/Down brake, A/Left steer left, D/Right steer right, Space drift (charge), Shift boost, F fullscreen, Esc pause, ~ debug.
+Controls (mobile): steer with left pad, hold Drift then tap Boost, pause via on-screen button.
+Maps: see MAPS; each is an arena {size, hazards[], boosts[]} (props are auto-scattered). Add entries to MAPS to create more arenas.
 Toggles: fullscreen button or F, gfx setting (high/med/low), debug (~). Click/tap once to focus for input capture.
-ENGINE CHOICE: Option A — Three.js real 3D (vendored) chosen; rewritten to open-world arena with chase bots.
+ENGINE CHOICE: Three.js real 3D (vendored, no CDN) to keep this static and lightweight.
 BASELINE AUDIT (before fixes):
 - Render loop crashed because drawPreview was missing; nothing started. Fixed with deterministic boot + error surface.
 - Input/focus: no focus gate, overlays captured keys. Added click/tap focus overlay + canvas focus/tap to capture keys.
@@ -13,9 +13,9 @@ BASELINE AUDIT (before fixes):
 - Gameplay: previous track-based lane system prevented steering; replaced with free-move yaw/velocity model and pursuit AI.
 */
 /* CURRENT AUDIT:
-- Speed: computed in update() via forward/back accel (CFG.accel/brake) with drag/coast, capped by CFG.maxSpeed; no throttle curve so top speed arrives too fast. dt clamped in tick() with CFG.dtMax.
-- Steering: steer input from readInput() -> yawVel/yaw in update(); forward vector = sin(yaw)/cos(yaw). Sign needs correction (reported reversed) plus a sanity assertion; touch uses same axis.
-- HUD: updateHUD() sets DOM textContent for #hud* cards (not canvas). Blur likely from CSS smoothing/scale; HUD is absolutely positioned overlay. Will add crisp text rendering and avoid transforms/fractional scaling.
+- Speed: update() integrates game.vel with (CFG.accel/brake) and drag; top speed is governed by CFG.maxSpeed + CFG.throttleCurve and dt clamped via CFG.dtMax.
+- Steering: readInput() returns steer axis where left is negative and right is positive; update() applies steer -> yawVel -> yaw; forward = (sin(yaw), 0, cos(yaw)).
+- HUD: updateHUD() updates DOM (#hud*). Blur was caused by HUD being behind the topbar backdrop-filter due to stacking context; fixed in CSS (see style.css).
 */
 
 (() => {
@@ -26,29 +26,34 @@ BASELINE AUDIT (before fixes):
   const lerp = (a, b, t) => a + (b - a) * clamp(t, 0, 1);
   const pick = arr => arr[Math.floor(Math.random() * arr.length)] || arr[0];
 
+  const ASSETS = { groundTex: null, skyTex: null, lavaTex: null, particleTex: null };
+
   /* Config */
   const CFG = {
     dtMax: 0.05,
-    maxSpeed: 230,
-    accel: 180,
-    brake: 280,
-    drag: 0.18,
-    coastDrag: 0.12,
-    lateralGrip: 7.5,
-    driftGrip: 3.5,
-    steer: 2.4,
-    steerDrift: 3.4,
+    maxSpeed: 92,
+    accel: 62,
+    brake: 120,
+    drag: 0.32,
+    coastDrag: 0.55,
+    lateralGrip: 8.6,
+    driftGrip: 3.2,
+    steer: 1.95,
+    steerDrift: 2.65,
     throttleCurve: 2.1,
-    boostPower: 420,
-    boostDrain: 32,
-    boostImpulse: 90,
-    boostGain: 0.8,
+    driftGain: 34,
+    boostPower: 155,
+    boostDrain: 28,
+    boostImpulse: 55,
+    boostGain: 1.0,
     maxHeat: 100,
-    heatGainDrift: 22,
-    heatGainBoost: 30,
-    heatGainHazard: 55,
-    heatCool: 16,
-    overheatDuration: 2.8,
+    heatGainDrift: 16,
+    heatGainBoost: 22,
+    heatGainHazard: 40,
+    heatCool: 10,
+    hazardSlow: 0.75,
+    heatCashBase: 90,
+    heatCashPerPoint: 10,
     pickupInterval: 7,
     rivalInterval: 5,
     rivalMax: 6,
@@ -61,6 +66,9 @@ BASELINE AUDIT (before fixes):
     cameraBack: 12.5,
     fovBase: 70,
     fovBoost: 10,
+    rivalAccel: 85,
+    rivalDrag: 0.16,
+    rivalMaxFactor: 0.92,
   };
 
   /* Maps (arenas) */
@@ -123,17 +131,27 @@ BASELINE AUDIT (before fixes):
 
   /* Perks */
   const PERKS = [
-    { id: 'cool', name: 'Cryo Lines', desc: 'Heat decay +25%.', apply: g => g.mod.coolRate *= 1.25 },
-    { id: 'grip', name: 'Grip Gel', desc: 'Grip up, off-road hurts less.', apply: g => { g.mod.grip *= 1.12; g.mod.offroadResist += 0.15; } },
+    { id: 'cool', name: 'Heat Bank', desc: 'Coolant cash-in +25%.', apply: g => g.mod.heatCash *= 1.25 },
+    { id: 'grip', name: 'Grip Gel', desc: 'Grip up, cornering is steadier.', apply: g => { g.mod.grip *= 1.14; } },
     { id: 'boost', name: 'Ion Boost', desc: 'Boost gain +20%, drain -10%.', apply: g => { g.mod.boostGain *= 1.2; g.mod.boostDrain *= 0.9; } },
     { id: 'shield', name: 'Phase Shield', desc: 'Start with one shield hit.', apply: g => { g.mod.shield = true; } },
     { id: 'magnet', name: 'Pick Magnet', desc: 'Pickups pull from farther.', apply: g => { g.mod.pickRange *= 1.4; } },
-    { id: 'resist', name: 'Lava Skin', desc: 'Hazard heat -30%.', apply: g => { g.mod.hazardResist *= 0.7; } },
+    { id: 'resist', name: 'Lava Treads', desc: 'Hazard slowdown -25%.', apply: g => { g.mod.hazardSlow *= 0.75; } },
   ];
 
   /* DOM refs */
   const ui = {};
-  const world = { arenaGroup: null, hazardMeshes: [], boostMeshes: [], props: null, hazardLights: [] };
+  const world = {
+    arenaGroup: null,
+    hazardMeshes: [],
+    boostMeshes: [],
+    props: null,
+    hazardLights: [],
+    speedFx: null,
+    speedFxAttr: null,
+    speedFxPos: null,
+    particles: null,
+  };
   let renderer, scene, camera;
   let playerMesh, playerShadow;
   const rivalPool = [];
@@ -168,7 +186,6 @@ BASELINE AUDIT (before fixes):
     boost: 0,
     boostPulse: 0,
     heat: 0,
-    overheat: 0,
     combo: 1,
     comboTimer: 0,
     score: 0,
@@ -199,6 +216,7 @@ BASELINE AUDIT (before fixes):
     initRenderer();
     initScene();
     initPools();
+    initParticles();
     bindUI();
     buildMapList();
     selectMap(game.mapIndex);
@@ -258,7 +276,7 @@ BASELINE AUDIT (before fixes):
   }
 
   function defaultMods() {
-    return { coolRate: 1, grip: 1, boostGain: 1, boostDrain: 1, hazardResist: 1, offroadResist: 0, pickRange: 1, shield: false };
+    return { coolRate: 1, grip: 1, steer: 1, boostGain: 1, boostDrain: 1, hazardSlow: 1, pickRange: 1, heatCash: 1, shield: false };
   }
 
   function loadSettings() {
@@ -272,12 +290,300 @@ BASELINE AUDIT (before fixes):
   function loadPerk() { try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.perk)) || null; } catch { return null; } }
   function savePerk() { if (game.perk) localStorage.setItem(STORAGE_KEYS.perk, JSON.stringify(game.perk)); else localStorage.removeItem(STORAGE_KEYS.perk); }
 
+  function getGroundTexture() {
+    if (ASSETS.groundTex) return ASSETS.groundTex;
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 512;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#0b1220';
+    ctx.fillRect(0, 0, c.width, c.height);
+    const g = ctx.createRadialGradient(256, 256, 10, 256, 256, 340);
+    g.addColorStop(0, 'rgba(255,159,64,0.10)');
+    g.addColorStop(1, 'rgba(92,123,255,0.00)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, c.width, c.height);
+    for (let i = 0; i < 14000; i++) {
+      const x = Math.random() * c.width;
+      const y = Math.random() * c.height;
+      const v = 10 + Math.random() * 35;
+      ctx.fillStyle = `rgba(${v},${v + 6},${v + 18},${Math.random() * 0.10})`;
+      ctx.fillRect(x, y, 1, 1);
+    }
+    ctx.globalAlpha = 0.18;
+    ctx.strokeStyle = '#7cf0d8';
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= c.width; x += 64) { ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, c.height); ctx.stroke(); }
+    for (let y = 0; y <= c.height; y += 64) { ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(c.width, y + 0.5); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+    // Crack/vein lines for readability at speed.
+    ctx.globalAlpha = 0.22;
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 34; i++) {
+      const x0 = Math.random() * c.width;
+      const y0 = Math.random() * c.height;
+      const x1 = x0 + (Math.random() - 0.5) * 180;
+      const y1 = y0 + (Math.random() - 0.5) * 180;
+      ctx.strokeStyle = `rgba(255,95,122,${0.08 + Math.random() * 0.12})`;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.quadraticCurveTo((x0 + x1) * 0.5 + (Math.random() - 0.5) * 90, (y0 + y1) * 0.5 + (Math.random() - 0.5) * 90, x1, y1);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.encoding = THREE.sRGBEncoding;
+    tex.anisotropy = 8;
+    ASSETS.groundTex = tex;
+    return tex;
+  }
+
+  function getLavaTexture() {
+    if (ASSETS.lavaTex) return ASSETS.lavaTex;
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 256;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#14050a';
+    ctx.fillRect(0, 0, c.width, c.height);
+    const g = ctx.createRadialGradient(128, 128, 10, 128, 128, 140);
+    g.addColorStop(0, 'rgba(255,95,122,0.95)');
+    g.addColorStop(0.45, 'rgba(255,107,74,0.65)');
+    g.addColorStop(1, 'rgba(20,5,10,0.0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.globalCompositeOperation = 'screen';
+    for (let i = 0; i < 180; i++) {
+      const x = Math.random() * c.width;
+      const y = Math.random() * c.height;
+      const r = 6 + Math.random() * 24;
+      const a = 0.08 + Math.random() * 0.18;
+      const gg = ctx.createRadialGradient(x, y, 1, x, y, r);
+      gg.addColorStop(0, `rgba(255,209,90,${a})`);
+      gg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = gg;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 0.35;
+    ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+    ctx.lineWidth = 3;
+    for (let i = 0; i < 28; i++) {
+      const x0 = Math.random() * c.width;
+      const y0 = Math.random() * c.height;
+      const x1 = x0 + (Math.random() - 0.5) * 140;
+      const y1 = y0 + (Math.random() - 0.5) * 140;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.quadraticCurveTo((x0 + x1) * 0.5 + (Math.random() - 0.5) * 80, (y0 + y1) * 0.5 + (Math.random() - 0.5) * 80, x1, y1);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(2, 2);
+    tex.encoding = THREE.sRGBEncoding;
+    tex.anisotropy = 4;
+    ASSETS.lavaTex = tex;
+    return tex;
+  }
+
+  function getParticleTexture() {
+    if (ASSETS.particleTex) return ASSETS.particleTex;
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 64;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(32, 32, 2, 32, 32, 32);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.3, 'rgba(255,255,255,0.7)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 64, 64);
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.encoding = THREE.sRGBEncoding;
+    ASSETS.particleTex = tex;
+    return tex;
+  }
+
+  function addSkyDome() {
+    if (ASSETS.skyTex) return;
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 512;
+    const ctx = c.getContext('2d');
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, '#05060d');
+    g.addColorStop(0.55, '#070b14');
+    g.addColorStop(1, '#11061a');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, c.width, c.height);
+    for (let i = 0; i < 1200; i++) {
+      const x = Math.random() * c.width;
+      const y = Math.random() * c.height * 0.7;
+      const a = Math.random() * 0.7;
+      ctx.fillStyle = `rgba(220,235,255,${a})`;
+      ctx.fillRect(x, y, 1, 1);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.encoding = THREE.sRGBEncoding;
+    ASSETS.skyTex = tex;
+    const sky = new THREE.Mesh(
+      new THREE.SphereGeometry(1800, 32, 16),
+      new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide })
+    );
+    scene.add(sky);
+  }
+
+  function createSpeedFx() {
+    const count = 220;
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * 18;
+      positions[i * 3 + 1] = (Math.random() - 0.4) * 10;
+      positions[i * 3 + 2] = -10 - Math.random() * 140;
+    }
+    const geo = new THREE.BufferGeometry();
+    const attr = new THREE.BufferAttribute(positions, 3);
+    geo.setAttribute('position', attr);
+    const mat = new THREE.PointsMaterial({ color: 0xcfe3ff, size: 0.12, transparent: true, opacity: 0.0, depthWrite: false });
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    world.speedFxAttr = attr;
+    world.speedFxPos = positions;
+    return pts;
+  }
+
+  function updateSpeedFx(dt, speedNorm, boosting) {
+    if (!world.speedFx || !world.speedFxAttr || !world.speedFxPos) return;
+    const mat = world.speedFx.material;
+    const targetOpacity = boosting ? 0.65 : speedNorm > 0.7 ? 0.45 : 0.0;
+    mat.opacity = lerp(mat.opacity, targetOpacity, dt * 6);
+    const speed = 60 + speedNorm * 220 + (boosting ? 280 : 0);
+    for (let i = 0; i < world.speedFxPos.length; i += 3) {
+      world.speedFxPos[i + 2] += speed * dt;
+      world.speedFxPos[i] += (Math.random() - 0.5) * 0.6 * dt;
+      world.speedFxPos[i + 1] += (Math.random() - 0.5) * 0.4 * dt;
+      if (world.speedFxPos[i + 2] > -8) {
+        world.speedFxPos[i] = (Math.random() - 0.5) * 18;
+        world.speedFxPos[i + 1] = (Math.random() - 0.4) * 10;
+        world.speedFxPos[i + 2] = -120 - Math.random() * 120;
+      }
+    }
+    world.speedFxAttr.needsUpdate = true;
+  }
+
+  function initParticles() {
+    const max = 1400;
+    const pos = new Float32Array(max * 3);
+    const col = new Float32Array(max * 3);
+    const vel = new Float32Array(max * 3);
+    const life = new Float32Array(max);
+    const geo = new THREE.BufferGeometry();
+    const posAttr = new THREE.BufferAttribute(pos, 3);
+    const colAttr = new THREE.BufferAttribute(col, 3);
+    geo.setAttribute('position', posAttr);
+    geo.setAttribute('color', colAttr);
+    const mat = new THREE.PointsMaterial({
+      size: 0.34,
+      map: getParticleTexture(),
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+      vertexColors: true,
+      blending: THREE.AdditiveBlending,
+    });
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    pts.renderOrder = 10;
+    scene.add(pts);
+    world.particles = { max, pos, col, vel, life, head: 0, pts, posAttr, colAttr };
+  }
+
+  function spawnParticle(x, y, z, vx, vy, vz, r, g, b, ttl) {
+    if (!world.particles) return;
+    const p = world.particles;
+    const i = p.head++ % p.max;
+    const ii = i * 3;
+    p.pos[ii] = x;
+    p.pos[ii + 1] = y;
+    p.pos[ii + 2] = z;
+    p.vel[ii] = vx;
+    p.vel[ii + 1] = vy;
+    p.vel[ii + 2] = vz;
+    p.col[ii] = r;
+    p.col[ii + 1] = g;
+    p.col[ii + 2] = b;
+    p.life[i] = ttl;
+    p.posAttr.needsUpdate = true;
+    p.colAttr.needsUpdate = true;
+  }
+
+  function updateParticles(dt, forward, input) {
+    const p = world.particles;
+    if (!p) return;
+    const drag = Math.max(0, 1 - 1.6 * dt);
+    for (let i = 0; i < p.max; i++) {
+      const l = p.life[i];
+      if (l <= 0) continue;
+      const nl = l - dt;
+      p.life[i] = nl;
+      const ii = i * 3;
+      p.pos[ii] += p.vel[ii] * dt;
+      p.pos[ii + 1] += p.vel[ii + 1] * dt;
+      p.pos[ii + 2] += p.vel[ii + 2] * dt;
+      p.vel[ii] *= drag;
+      p.vel[ii + 1] = (p.vel[ii + 1] - 0.35 * dt) * drag;
+      p.vel[ii + 2] *= drag;
+      if (nl <= 0) p.pos[ii + 1] = -9999;
+    }
+    p.posAttr.needsUpdate = true;
+
+    // Drift smoke
+    if (game.drifting && game.speed > 8) {
+      const back = forward.clone().multiplyScalar(-2.1);
+      for (let k = 0; k < 2; k++) {
+        spawnParticle(
+          game.pos.x + back.x + (Math.random() - 0.5) * 0.7,
+          0.25 + Math.random() * 0.2,
+          game.pos.z + back.z + (Math.random() - 0.5) * 0.7,
+          back.x * (0.6 + Math.random() * 0.6) + (Math.random() - 0.5) * 1.2,
+          1.2 + Math.random() * 0.7,
+          back.z * (0.6 + Math.random() * 0.6) + (Math.random() - 0.5) * 1.2,
+          0.55, 0.65, 0.8,
+          0.55 + Math.random() * 0.35
+        );
+      }
+    }
+
+    // Boost sparks
+    if (input.boost && game.boost > 0) {
+      const back = forward.clone().multiplyScalar(-1.2);
+      spawnParticle(
+        game.pos.x + back.x + (Math.random() - 0.5) * 0.5,
+        0.35 + Math.random() * 0.25,
+        game.pos.z + back.z + (Math.random() - 0.5) * 0.5,
+        back.x * (3.5 + Math.random() * 2.0) + (Math.random() - 0.5) * 2.2,
+        2.0 + Math.random() * 1.8,
+        back.z * (3.5 + Math.random() * 2.0) + (Math.random() - 0.5) * 2.2,
+        1.0, 0.85, 0.55,
+        0.22 + Math.random() * 0.18
+      );
+    }
+  }
+
   /* Renderer & Scene */
   function initRenderer() {
     renderer = new THREE.WebGLRenderer({ canvas: ui.canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
     renderer.setPixelRatio(1);
     renderer.setSize(window.innerWidth, window.innerHeight, false);
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
     camera = new THREE.PerspectiveCamera(CFG.fovBase, window.innerWidth / window.innerHeight, 0.1, 3000);
     camera.position.set(0, CFG.cameraHeight, CFG.cameraBack);
     camera.lookAt(0, 0, 0);
@@ -300,6 +606,11 @@ BASELINE AUDIT (before fixes):
 
     world.arenaGroup = new THREE.Group();
     scene.add(world.arenaGroup);
+
+    addSkyDome();
+    world.speedFx = createSpeedFx();
+    camera.add(world.speedFx);
+    scene.add(camera);
   }
 
   function initPools() {
@@ -318,15 +629,45 @@ BASELINE AUDIT (before fixes):
 
   function buildCar(color, accent) {
     const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.65, 3), new THREE.MeshStandardMaterial({ color, emissive: accent, roughness: 0.4, metalness: 0.2 }));
+    const bodyMat = new THREE.MeshStandardMaterial({ color, emissive: accent, emissiveIntensity: 0.9, roughness: 0.35, metalness: 0.25 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.65, 3.2), bodyMat);
     body.castShadow = true; body.receiveShadow = true; g.add(body);
-    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.55, 1.2), new THREE.MeshStandardMaterial({ color: 0x0c1320, emissive: 0x0c1320, roughness: 0.6 }));
-    cab.position.set(0, 0.55, -0.05); cab.castShadow = true; g.add(cab);
+
+    const cabMat = new THREE.MeshStandardMaterial({ color: 0x0c1320, emissive: 0x0c1320, roughness: 0.55, metalness: 0.05 });
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.32, 0.58, 1.25), cabMat);
+    cab.position.set(0, 0.56, -0.1); cab.castShadow = true; g.add(cab);
+
+    const glow = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.8, 1.4),
+      new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.24, blending: THREE.AdditiveBlending, depthWrite: false })
+    );
+    glow.rotation.x = -Math.PI / 2;
+    glow.position.set(0, -0.33, 0.2);
+    glow.renderOrder = 1;
+    g.add(glow);
+
+    const lightMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xcfe3ff, emissiveIntensity: 1.2, roughness: 0.25, metalness: 0.05 });
+    const headL = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.05), lightMat);
+    const headR = headL.clone();
+    headL.position.set(-0.55, 0.1, 1.62);
+    headR.position.set(0.55, 0.1, 1.62);
+    g.add(headL, headR);
+
+    const tailMat = new THREE.MeshStandardMaterial({ color: 0xff3b2b, emissive: 0xff3b2b, emissiveIntensity: 1.2, roughness: 0.35, metalness: 0.05 });
+    const tailL = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.16, 0.05), tailMat);
+    const tailR = tailL.clone();
+    tailL.position.set(-0.55, 0.12, -1.62);
+    tailR.position.set(0.55, 0.12, -1.62);
+    g.add(tailL, tailR);
+
     const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.5, 12); wheelGeo.rotateZ(Math.PI / 2);
     const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111, roughness: 0.8 });
+    const wheels = [];
     [[0.75, -0.3, 1], [-0.75, -0.3, 1], [0.75, -0.3, -1], [-0.75, -0.3, -1]].forEach(o => {
       const w = new THREE.Mesh(wheelGeo, wheelMat); w.position.set(o[0], o[1], o[2]); w.castShadow = true; g.add(w);
+      wheels.push(w);
     });
+    g.userData.wheels = wheels;
     return g;
   }
 
@@ -377,7 +718,7 @@ BASELINE AUDIT (before fixes):
     MAPS.forEach((m, idx) => {
       const card = document.createElement('button');
       card.className = 'map-card';
-      card.innerHTML = `<div class="name">${m.name}</div><div class="muted tiny">${m.desc}</div><div class="muted tiny">${m.difficulty} · Arena</div>`;
+      card.innerHTML = `<div class="name">${m.name}</div><div class="muted tiny">${m.desc}</div><div class="muted tiny">${m.difficulty} &middot; Arena</div>`;
       card.addEventListener('click', () => selectMap(idx));
       ui.mapList.appendChild(card);
     });
@@ -454,7 +795,7 @@ BASELINE AUDIT (before fixes):
     game.pos.set(0, 0, 0);
     game.vel.set(0, 0, 0);
     game.yaw = 0; game.yawVel = 0;
-    game.speed = 0; game.drift = 0; game.boost = 0; game.boostPulse = 0; game.heat = 0; game.overheat = 0; game.combo = 1; game.comboTimer = 0; game.score = 0; game.runTime = 0;
+    game.speed = 0; game.drift = 0; game.boost = 0; game.boostPulse = 0; game.heat = 0; game.combo = 1; game.comboTimer = 0; game.score = 0; game.runTime = 0;
     game.pickupTimer = CFG.pickupInterval; game.rivalTimer = CFG.rivalInterval; game.autopilotTime = 0;
     game.shake = 0; game.lastDt = 0; game.steerInput = 0;
     game.mod = defaultMods();
@@ -479,43 +820,103 @@ BASELINE AUDIT (before fixes):
     world.hazardMeshes = []; world.boostMeshes = [];
     world.hazardLights?.forEach(l => scene.remove(l)); world.hazardLights = [];
 
-    const groundMat = new THREE.MeshStandardMaterial({ color: 0x0b1220, roughness: 0.9, metalness: 0.05 });
-    const ground = new THREE.Mesh(new THREE.CircleGeometry(def.size * 1.4, 64), groundMat);
-    ground.rotation.x = -Math.PI / 2;
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x0b1220, roughness: 0.9, metalness: 0.05, emissive: 0x060813, emissiveIntensity: 0.35 });
+    const groundTex = getGroundTexture();
+    groundTex.repeat.set(def.size / 110, def.size / 110);
+    groundMat.map = groundTex;
+    groundMat.map.needsUpdate = true;
+    const groundGeo = new THREE.CircleGeometry(def.size * 1.4, 96);
+    groundGeo.rotateX(-Math.PI / 2);
+    const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.receiveShadow = true;
     world.arenaGroup.add(ground);
 
-    const edgeGeo = new THREE.RingGeometry(def.size * 0.98, def.size * 1.02, 64);
+    const edgeGeo = new THREE.RingGeometry(def.size * 0.98, def.size * 1.02, 96);
+    edgeGeo.rotateX(-Math.PI / 2);
     const edgeMat = new THREE.MeshBasicMaterial({ color: 0x445, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
-    const edge = new THREE.Mesh(edgeGeo, edgeMat); edge.rotation.x = -Math.PI / 2; world.arenaGroup.add(edge);
+    const edge = new THREE.Mesh(edgeGeo, edgeMat);
+    edge.renderOrder = 2;
+    world.arenaGroup.add(edge);
+
+    const wallGeo = new THREE.CylinderGeometry(def.size * 1.03, def.size * 1.03, 58, 80, 1, true);
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x070a12, roughness: 0.92, metalness: 0.05, emissive: 0x050817, emissiveIntensity: 0.25, side: THREE.BackSide });
+    const wall = new THREE.Mesh(wallGeo, wallMat);
+    wall.position.y = 29;
+    wall.receiveShadow = true;
+    world.arenaGroup.add(wall);
 
     def.hazards?.forEach(h => {
-      const geo = new THREE.CircleGeometry(h.r, 32);
-      const mat = new THREE.MeshStandardMaterial({ color: 0x4b0c0c, emissive: 0xd63a25, roughness: 0.6, metalness: 0.1, transparent: true, opacity: 0.85 });
-      const mesh = new THREE.Mesh(geo, mat); mesh.rotation.x = -Math.PI / 2; mesh.position.set(h.x, 0.01, h.z); mesh.receiveShadow = true;
+      const geo = new THREE.CircleGeometry(h.r, 48);
+      geo.rotateX(-Math.PI / 2);
+      const lavaTex = getLavaTexture().clone();
+      lavaTex.needsUpdate = true;
+      lavaTex.repeat.set(Math.max(1, h.r / 28), Math.max(1, h.r / 28));
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xff6b4a,
+        emissive: 0xff3b2b,
+        emissiveIntensity: 1.05,
+        roughness: 0.55,
+        metalness: 0.05,
+        transparent: true,
+        opacity: 0.92,
+        map: lavaTex,
+        emissiveMap: lavaTex,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(h.x, 0.02, h.z);
       world.arenaGroup.add(mesh); world.hazardMeshes.push({ mesh, data: h });
       const light = new THREE.PointLight(0xff4f36, 0.7, 220); light.position.set(h.x, 18, h.z); scene.add(light); world.hazardLights.push(light);
     });
 
     def.boosts?.forEach(b => {
-      const geo = new THREE.RingGeometry(b.r * 0.6, b.r, 32);
-      const mat = new THREE.MeshStandardMaterial({ color: 0xffd15a, emissive: 0xb06500, roughness: 0.4, metalness: 0.2, transparent: true, opacity: 0.9 });
-      const mesh = new THREE.Mesh(geo, mat); mesh.rotation.x = -Math.PI / 2; mesh.position.set(b.x, 0.015, b.z); mesh.receiveShadow = true;
+      const geo = new THREE.RingGeometry(b.r * 0.6, b.r, 48);
+      geo.rotateX(-Math.PI / 2);
+      const mat = new THREE.MeshStandardMaterial({ color: 0xffd15a, emissive: 0xff9f40, emissiveIntensity: 0.95, roughness: 0.35, metalness: 0.15, transparent: true, opacity: 0.95, depthWrite: false });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(b.x, 0.03, b.z);
       world.arenaGroup.add(mesh); world.boostMeshes.push({ mesh, data: b });
     });
 
     const propGeo = new THREE.ConeGeometry(2, 9, 6);
-    const propMat = new THREE.MeshStandardMaterial({ color: 0x7cf0d8, emissive: 0x1f3a32 });
-    const propCount = Math.floor(def.size / 12);
+    const propMat = new THREE.MeshStandardMaterial({ color: 0x7cf0d8, emissive: 0x1f3a32, roughness: 0.55, metalness: 0.12 });
+    const propCount = Math.floor(def.size / 9);
     const props = new THREE.InstancedMesh(propGeo, propMat, propCount);
+    props.castShadow = true;
+    props.receiveShadow = true;
     const m = new THREE.Matrix4();
+    const rot = new THREE.Matrix4();
+    const scl = new THREE.Matrix4();
     for (let i = 0; i < propCount; i++) {
-      const ang = (i / propCount) * Math.PI * 2;
-      const dist = def.size * (0.7 + Math.random() * 0.25);
-      m.makeTranslation(Math.cos(ang) * dist, 4.5, Math.sin(ang) * dist);
+      const ang = Math.random() * Math.PI * 2;
+      const dist = def.size * (0.82 + Math.random() * 0.34);
+      const h = 6 + Math.random() * 10;
+      m.makeTranslation(Math.cos(ang) * dist, h * 0.5, Math.sin(ang) * dist);
+      rot.makeRotationY(Math.random() * Math.PI * 2);
+      scl.makeScale(0.85 + Math.random() * 0.65, h / 9, 0.85 + Math.random() * 0.65);
+      m.multiply(rot).multiply(scl);
       props.setMatrixAt(i, m);
     }
     world.arenaGroup.add(props);
+
+    const rockGeo = new THREE.IcosahedronGeometry(1.6, 0);
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x1a2233, roughness: 0.95, metalness: 0.02, emissive: 0x070a12, emissiveIntensity: 0.15 });
+    const rockCount = Math.floor(def.size / 6);
+    const rocks = new THREE.InstancedMesh(rockGeo, rockMat, rockCount);
+    rocks.castShadow = true;
+    rocks.receiveShadow = true;
+    for (let i = 0; i < rockCount; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = def.size * (0.2 + Math.random() * 0.78);
+      const x = Math.cos(ang) * dist;
+      const z = Math.sin(ang) * dist;
+      m.makeTranslation(x, 0.8, z);
+      rot.makeRotationY(Math.random() * Math.PI * 2);
+      scl.makeScale(0.55 + Math.random() * 1.6, 0.55 + Math.random() * 1.3, 0.55 + Math.random() * 1.6);
+      m.multiply(rot).multiply(scl);
+      rocks.setMatrixAt(i, m);
+    }
+    world.arenaGroup.add(rocks);
 
     activeRivals.length = 0; activePickups.length = 0;
     rivalPool.forEach(m => m.visible = false);
@@ -546,7 +947,8 @@ BASELINE AUDIT (before fixes):
     const leftDown = keys[left] || touch.left;
     const rightDown = keys[right] || touch.right;
     return {
-      steer: (leftDown ? -1 : 0) + (rightDown ? 1 : 0),
+      // Convention: left is negative, right is positive (matches typical game axes).
+      steer: (rightDown ? 1 : 0) + (leftDown ? -1 : 0),
       left: leftDown,
       right: rightDown,
       accel: keys[up] || touch.accel || false,
@@ -580,21 +982,19 @@ BASELINE AUDIT (before fixes):
     const right = new THREE.Vector3(forward.z, 0, -forward.x);
 
     const speedScale = Number(game.settings.speedScale || 1);
-    const maxSpeed = CFG.maxSpeed * speedScale * (game.overheat > 0 ? 0.65 : 1);
+    const maxSpeed = CFG.maxSpeed * speedScale;
     const boostCap = maxSpeed * 1.25;
     const speedRatio = clamp(game.speed / Math.max(1, maxSpeed), 0, 1);
 
     const steerInput = input.steer;
     game.steerInput = steerInput;
-    if (input.left) console.assert(!(steerInput > -0.001), 'Steering sanity: left should be negative');
-
     const throttleCurve = 1 - Math.pow(speedRatio, CFG.throttleCurve);
-    const effAccel = CFG.accel * throttleCurve * (game.overheat > 0 ? 0.7 : 1);
+    const effAccel = CFG.accel * throttleCurve;
     if (input.accel) game.vel.addScaledVector(forward, effAccel * dt);
     if (input.brake) game.vel.addScaledVector(forward, -CFG.brake * dt);
 
-    const steerGrip = input.drift ? CFG.driftGrip : CFG.lateralGrip;
-    const steerRate = (input.drift ? CFG.steerDrift : CFG.steer) * (0.55 + (1 - speedRatio) * 0.6);
+    const steerGrip = (input.drift ? CFG.driftGrip : CFG.lateralGrip) * game.mod.grip;
+    const steerRate = (input.drift ? CFG.steerDrift : CFG.steer) * game.mod.steer * (0.55 + (1 - speedRatio) * 0.6);
     game.yawVel = lerp(game.yawVel, steerInput * steerRate, dt * (input.drift ? 6 : 8));
     game.yaw += game.yawVel * dt;
 
@@ -603,25 +1003,33 @@ BASELINE AUDIT (before fixes):
     side = lerp(side, 0, dt * steerGrip);
     game.vel.copy(forward.clone().multiplyScalar(fSpeed)).add(right.clone().multiplyScalar(side));
 
-    let baseDrag = CFG.drag + (input.accel ? 0 : CFG.coastDrag);
-    if (game.overheat > 0) baseDrag *= 1.25;
+    const baseDrag = CFG.drag + (input.accel ? 0 : CFG.coastDrag);
     game.vel.multiplyScalar(Math.max(0, 1 - baseDrag * dt));
     game.speed = game.vel.length();
     if (game.speed > boostCap) game.vel.setLength(boostCap);
     game.speed = game.vel.length();
+    const speedNormNow = clamp(game.speed / Math.max(1, maxSpeed), 0, 1);
+    const heat01 = clamp(game.heat / CFG.maxHeat, 0, 1);
+    const scoreMult = 1 + heat01 * 0.65;
 
     if (input.drift) {
       game.drift = clamp(game.drift + CFG.driftGain * dt, 0, 100);
       game.speed *= 0.995;
       game.heat += CFG.heatGainDrift * dt;
       game.drifting = true;
-      if (game.drift > 25) { addCombo(0.05 * dt); game.score += 3 * dt; }
+      if (game.drift > 25) { addCombo(0.05 * dt); game.score += 3 * dt * scoreMult; }
     } else if (game.drifting) {
       if (game.drift > 5) {
+        const release01 = clamp(game.drift / 100, 0, 1);
         const gain = game.drift * CFG.boostGain * game.mod.boostGain;
         game.boost = clamp(game.boost + gain, 0, 140);
-        game.boostPulse = 0.9;
-        setToast('Boost charged');
+        game.boostPulse = Math.max(game.boostPulse, 0.22 + release01 * 0.55);
+        game.vel.addScaledVector(forward, CFG.boostImpulse * (0.3 + release01));
+        game.shake = Math.max(game.shake, 0.22 + release01 * 0.35);
+        addCombo(0.35 + release01 * 0.4);
+        game.score += (70 + 180 * release01) * game.combo * scoreMult;
+        playTone(560 + release01 * 180, 0.07, 0.12);
+        setToast('Drift boost!');
       }
       game.drift = 0;
       game.drifting = false;
@@ -639,18 +1047,21 @@ BASELINE AUDIT (before fixes):
     clampToArena(game.map, game.pos, game.vel);
 
     applyHazards(dt, game.pos);
-    applyBoostPads(game.pos, forward);
+    applyBoostPads(dt, game.pos, forward);
     applyHeat(dt);
+    animateArenaFx(game.runTime);
+    updateSpeedFx(dt, speedNormNow, !!(input.boost || game.boostPulse > 0.01));
+    updateParticles(dt, forward, input);
 
     game.comboTimer = Math.max(0, game.comboTimer - dt);
     if (game.comboTimer <= 0) game.combo = Math.max(1, game.combo - 0.2 * dt);
-    game.score += (game.speed * 0.06 + (input.drift ? 3 : 0)) * dt * game.combo;
+    game.score += (game.speed * 0.06 + (input.drift ? 3 : 0)) * dt * game.combo * scoreMult;
 
     game.shake = Math.max(0, game.shake - dt * 1.6);
 
     updatePickups(dt);
     updateRivals(dt);
-    updatePlayerMesh(forward);
+    updatePlayerMesh(forward, dt);
     updateCamera(forward);
     updateHUD();
   }
@@ -674,38 +1085,68 @@ BASELINE AUDIT (before fixes):
     game.map.hazards?.forEach(h => {
       const d2 = (pos.x - h.x) ** 2 + (pos.z - h.z) ** 2;
       if (d2 < h.r * h.r) {
-        game.heat += CFG.heatGainHazard * dt * game.mod.hazardResist;
-        game.vel.multiplyScalar(1 - 0.6 * dt);
+        game.heat += CFG.heatGainHazard * dt;
+        game.vel.multiplyScalar(Math.max(0, 1 - CFG.hazardSlow * dt * game.mod.hazardSlow));
+        if (Math.random() < 10 * dt) {
+          const ang = Math.random() * Math.PI * 2;
+          const rr = Math.sqrt(Math.random()) * h.r;
+          spawnParticle(
+            h.x + Math.cos(ang) * rr,
+            0.2 + Math.random() * 0.2,
+            h.z + Math.sin(ang) * rr,
+            (Math.random() - 0.5) * 3.0,
+            3.0 + Math.random() * 2.5,
+            (Math.random() - 0.5) * 3.0,
+            1.0, 0.45 + Math.random() * 0.2, 0.25,
+            0.35 + Math.random() * 0.35
+          );
+        }
       }
     });
   }
 
-  function applyBoostPads(pos, forward) {
+  function animateArenaFx(t) {
+    const lavaOx = (t * 0.03) % 1;
+    const lavaOy = (t * 0.02) % 1;
+    for (let i = 0; i < world.hazardMeshes.length; i++) {
+      const mat = world.hazardMeshes[i].mesh.material;
+      if (mat && 'emissiveIntensity' in mat) mat.emissiveIntensity = 0.95 + 0.35 * Math.sin(t * 2.8 + i);
+      if (mat && mat.map) mat.map.offset.set(lavaOx, lavaOy);
+      if (mat && mat.emissiveMap) mat.emissiveMap.offset.set(lavaOx, lavaOy);
+    }
+    for (let i = 0; i < world.boostMeshes.length; i++) {
+      const mesh = world.boostMeshes[i].mesh;
+      const mat = mesh.material;
+      if (mat && 'emissiveIntensity' in mat) mat.emissiveIntensity = 0.85 + 0.45 * Math.sin(t * 3.2 + i);
+      mesh.rotation.y = t * 0.7 + i * 0.4;
+    }
+  }
+
+  function applyBoostPads(dt, pos, forward) {
     game.map.boosts?.forEach(b => {
       const d2 = (pos.x - b.x) ** 2 + (pos.z - b.z) ** 2;
       if (d2 < b.r * b.r) {
-        game.boost = clamp(game.boost + 16 * game.lastDt, 0, 140);
-        game.vel.addScaledVector(forward, CFG.boostPower * 0.28 * game.lastDt);
+        game.boost = clamp(game.boost + 16 * dt, 0, 140);
+        game.vel.addScaledVector(forward, CFG.boostPower * 0.28 * dt);
         game.shake = Math.max(game.shake, 0.18);
       }
     });
   }
 
   function applyHeat(dt) {
-    if (game.overheat > 0) game.overheat = Math.max(0, game.overheat - dt);
     game.heat = clamp(game.heat - CFG.heatCool * dt * game.mod.coolRate, 0, CFG.maxHeat);
-    if (game.heat >= CFG.maxHeat && game.overheat <= 0) {
-      game.overheat = CFG.overheatDuration;
-      game.heat = CFG.maxHeat;
-      playTone(180, 0.1, 0.12);
-      setToast('Overheat! Limp mode');
-    }
   }
 
-  function updatePlayerMesh(forward) {
+  function updatePlayerMesh(forward, dt) {
     playerMesh.position.copy(game.pos);
     playerMesh.position.y = 0.6;
     playerMesh.rotation.y = Math.atan2(forward.x, forward.z);
+    const wheels = playerMesh.userData?.wheels;
+    if (wheels && wheels.length) {
+      const signedSpeed = game.vel.dot(forward);
+      const spin = (signedSpeed / 0.35) * dt;
+      for (let i = 0; i < wheels.length; i++) wheels[i].rotation.x += spin;
+    }
     if (playerShadow) { playerShadow.position.set(game.pos.x, 0.01, game.pos.z); playerShadow.scale.set(1, 1, 1); }
   }
 
@@ -775,11 +1216,27 @@ BASELINE AUDIT (before fixes):
   }
 
   function collectPickup(p) {
-    if (p.type === 'cool') game.heat = Math.max(0, game.heat - 28);
-    if (p.type === 'cell') game.boost = clamp(game.boost + 45, 0, 140);
-    if (p.type === 'shield') { game.mod.shield = true; setToast('Shield ready'); }
-    if (p.type === 'coin') { game.score += 180 * game.combo; addCombo(0.5); }
-    playTone(520, 0.08, 0.12);
+    const heat01 = clamp(game.heat / CFG.maxHeat, 0, 1);
+    const scoreMult = 1 + heat01 * 0.65;
+    if (p.type === 'cool') {
+      const payout = (CFG.heatCashBase + game.heat * CFG.heatCashPerPoint) * game.mod.heatCash;
+      game.score += payout * game.combo;
+      game.heat = 0;
+      addCombo(0.8);
+      setToast('Coolant: cashed heat!');
+      playTone(740, 0.08, 0.12);
+    } else if (p.type === 'cell') {
+      game.boost = clamp(game.boost + 45, 0, 140);
+      playTone(520, 0.08, 0.12);
+    } else if (p.type === 'shield') {
+      game.mod.shield = true;
+      setToast('Shield ready');
+      playTone(560, 0.08, 0.12);
+    } else if (p.type === 'coin') {
+      game.score += 180 * game.combo * scoreMult;
+      addCombo(0.5);
+      playTone(480, 0.06, 0.12);
+    }
     p.mesh.visible = false;
   }
 
@@ -798,6 +1255,9 @@ BASELINE AUDIT (before fixes):
   function updateRivals(dt) {
     game.rivalTimer -= dt;
     if (game.rivalTimer <= 0 && activeRivals.length < CFG.rivalMax) { spawnRival(); game.rivalTimer = CFG.rivalInterval; }
+    const speedScale = Number(game.settings.speedScale || 1);
+    const playerTop = CFG.maxSpeed * speedScale;
+    const rivalTop = playerTop * CFG.rivalMaxFactor;
     for (let i = activeRivals.length - 1; i >= 0; i--) {
       const r = activeRivals[i];
       const toPlayer = game.pos.clone().sub(r.pos);
@@ -807,9 +1267,10 @@ BASELINE AUDIT (before fixes):
       if (r.type === 'blocker') laneOffset = Math.sin(game.runTime * 1.4 + i) * 0.45;
       if (r.type === 'hunter') laneOffset = Math.sin(game.runTime * 2.6 + i) * 0.25;
       const desiredDir = dir.clone().addScaledVector(side, laneOffset).normalize();
-      r.vel.addScaledVector(desiredDir, (120 + Math.random() * 30) * dt);
-      r.vel.multiplyScalar(Math.max(0, 1 - 0.12 * dt));
-      r.speed = clamp(r.vel.length(), 40, CFG.maxSpeed * 0.82);
+      r.vel.addScaledVector(desiredDir, (CFG.rivalAccel * (0.85 + Math.random() * 0.3)) * dt);
+      r.vel.multiplyScalar(Math.max(0, 1 - CFG.rivalDrag * dt));
+      if (r.vel.length() > rivalTop) r.vel.setLength(rivalTop);
+      r.speed = r.vel.length();
       r.pos.addScaledVector(r.vel, dt);
       clampToArena(game.map, r.pos, r.vel);
       r.yaw = Math.atan2(r.vel.x, r.vel.z);
@@ -818,7 +1279,12 @@ BASELINE AUDIT (before fixes):
 
       r.nearCd = Math.max(0, (r.nearCd || 0) - dt);
       const dz = game.pos.clone().sub(r.pos).length();
-      if (dz > 3 && dz < 8 && r.nearCd <= 0) { addCombo(0.12); game.score += 18; r.nearCd = 1; }
+      if (dz > 3 && dz < 8 && r.nearCd <= 0) {
+        addCombo(0.12);
+        const heat01 = clamp(game.heat / CFG.maxHeat, 0, 1);
+        game.score += 18 * (1 + heat01 * 0.65);
+        r.nearCd = 1;
+      }
       if (dz < 3) {
         if (game.mod.shield) { game.mod.shield = false; setToast('Shield broke'); playTone(260, 0.06, 0.1); }
         else { bump(); }
@@ -833,6 +1299,18 @@ BASELINE AUDIT (before fixes):
     addCombo(-0.5);
     playTone(220, 0.08, 0.14);
     game.shake = Math.max(game.shake, 0.6);
+    for (let i = 0; i < 10; i++) {
+      spawnParticle(
+        game.pos.x + (Math.random() - 0.5) * 1.2,
+        0.4 + Math.random() * 0.6,
+        game.pos.z + (Math.random() - 0.5) * 1.2,
+        (Math.random() - 0.5) * 8,
+        3 + Math.random() * 4,
+        (Math.random() - 0.5) * 8,
+        1.0, 0.7, 0.35,
+        0.25 + Math.random() * 0.25
+      );
+    }
   }
 
   function addCombo(v) { game.combo = clamp(game.combo + v, 1, 9); game.comboTimer = 3; }
@@ -856,7 +1334,7 @@ BASELINE AUDIT (before fixes):
     ui.hudSpeed.textContent = game.speed.toFixed(0);
     ui.hudScore.textContent = game.score.toFixed(0);
     ui.hudCombo.textContent = `x${game.combo.toFixed(1)}`;
-    ui.hudLap.textContent = `${MAPS[game.mapIndex].name} · ${game.runTime.toFixed(1)}s`;
+    ui.hudLap.textContent = `${MAPS[game.mapIndex].name} - ${game.runTime.toFixed(1)}s`;
     ui.heatBar.style.width = `${game.heat}%`;
     ui.driftBar.style.width = `${game.drift}%`;
     ui.boostBar.style.width = `${game.boost / 1.4}%`;
@@ -876,7 +1354,7 @@ BASELINE AUDIT (before fixes):
     game.state = 'over';
     show(ui.gameoverOverlay);
     document.querySelector('#gameoverTitle').textContent = reason;
-    document.querySelector('#gameoverStats').textContent = `Score ${game.score.toFixed(0)} · Time ${game.runTime.toFixed(1)}s`;
+    document.querySelector('#gameoverStats').textContent = `Score ${game.score.toFixed(0)} - Time ${game.runTime.toFixed(1)}s`;
     recordScore();
     populatePerks();
   }
