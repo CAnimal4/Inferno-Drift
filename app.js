@@ -947,8 +947,8 @@ BASELINE AUDIT (before fixes):
     const leftDown = keys[left] || touch.left;
     const rightDown = keys[right] || touch.right;
     return {
-      // Convention: left is negative, right is positive (matches typical game axes).
-      steer: (rightDown ? 1 : 0) + (leftDown ? -1 : 0),
+      // Steer axis: left is positive, right is negative; yaw application below converts to screen-correct turn.
+      steer: (leftDown ? 1 : 0) - (rightDown ? 1 : 0),
       left: leftDown,
       right: rightDown,
       accel: keys[up] || touch.accel || false,
@@ -995,7 +995,8 @@ BASELINE AUDIT (before fixes):
 
     const steerGrip = (input.drift ? CFG.driftGrip : CFG.lateralGrip) * game.mod.grip;
     const steerRate = (input.drift ? CFG.steerDrift : CFG.steer) * game.mod.steer * (0.55 + (1 - speedRatio) * 0.6);
-    game.yawVel = lerp(game.yawVel, steerInput * steerRate, dt * (input.drift ? 6 : 8));
+    // Negative here makes ArrowLeft/WASD-left turn left on screen (chase camera).
+    game.yawVel = lerp(game.yawVel, (-steerInput) * steerRate, dt * (input.drift ? 6 : 8));
     game.yaw += game.yawVel * dt;
 
     const fSpeed = game.vel.dot(forward);
@@ -1260,8 +1261,11 @@ BASELINE AUDIT (before fixes):
     const rivalTop = playerTop * CFG.rivalMaxFactor;
     for (let i = activeRivals.length - 1; i >= 0; i--) {
       const r = activeRivals[i];
+      r.hitCd = Math.max(0, (r.hitCd || 0) - dt);
       const toPlayer = game.pos.clone().sub(r.pos);
-      const dir = toPlayer.clone().normalize();
+      const dir = toPlayer.clone();
+      if (dir.lengthSq() > 1e-8) dir.normalize();
+      else dir.set(Math.cos(i), 0, Math.sin(i));
       const side = new THREE.Vector3(dir.z, 0, -dir.x);
       let laneOffset = 0;
       if (r.type === 'blocker') laneOffset = Math.sin(game.runTime * 1.4 + i) * 0.45;
@@ -1285,10 +1289,33 @@ BASELINE AUDIT (before fixes):
         game.score += 18 * (1 + heat01 * 0.65);
         r.nearCd = 1;
       }
-      if (dz < 3) {
+      if (dz < 2.85 && r.hitCd <= 0) {
+        const minDist = 2.85;
+        const n = game.pos.clone().sub(r.pos);
+        if (n.lengthSq() < 1e-8) n.copy(game.vel).sub(r.vel);
+        if (n.lengthSq() < 1e-8) n.set((Math.random() - 0.5), 0, (Math.random() - 0.5));
+        n.y = 0;
+        n.normalize();
+
+        const penetration = Math.max(0, minDist - dz);
+        if (Number.isFinite(penetration) && penetration > 0) {
+          game.pos.addScaledVector(n, penetration * 0.58);
+          r.pos.addScaledVector(n, -penetration * 0.58);
+        }
+
+        // Damped "swap" of normal velocity components to avoid infinite spin/overlap.
+        const vpn = game.vel.dot(n);
+        const vrn = r.vel.dot(n);
+        if (Number.isFinite(vpn) && Number.isFinite(vrn)) {
+          const damp = 0.55;
+          game.vel.addScaledVector(n, (vrn - vpn) * damp);
+          r.vel.addScaledVector(n, (vpn - vrn) * damp);
+        }
+
         if (game.mod.shield) { game.mod.shield = false; setToast('Shield broke'); playTone(260, 0.06, 0.1); }
-        else { bump(); }
-        r.vel.multiplyScalar(0.6);
+        else bump();
+
+        r.hitCd = 0.35;
       }
     }
   }
