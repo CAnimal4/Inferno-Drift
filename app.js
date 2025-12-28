@@ -13,8 +13,8 @@ BASELINE AUDIT (before fixes):
 - Gameplay: previous track-based lane system prevented steering; replaced with free-move yaw/velocity model and pursuit AI.
 */
 /* CURRENT AUDIT:
-- Speed: update() integrates game.vel with (CFG.accel/brake) and drag; top speed is governed by CFG.maxSpeed + CFG.throttleCurve and dt clamped via CFG.dtMax.
-- Steering: readInput() returns steer axis where left is negative and right is positive; update() applies steer -> yawVel -> yaw; forward = (sin(yaw), 0, cos(yaw)).
+- Speed: update() integrates game.vel with (CFG.accel/brake) and drag; no hard cap (CFG.maxSpeed is only a very high soft reference).
+- Steering: readInput() returns steer axis where left is positive and right is negative; update() applies steer -> yawVel -> yaw; forward = (sin(yaw), 0, cos(yaw)).
 - HUD: updateHUD() updates DOM (#hud*). Blur was caused by HUD being behind the topbar backdrop-filter due to stacking context; fixed in CSS (see style.css).
 */
 
@@ -31,11 +31,12 @@ BASELINE AUDIT (before fixes):
   /* Config */
   const CFG = {
     dtMax: 0.05,
-    maxSpeed: 92,
-    accel: 62,
+    // No hard top-speed cap: keep accelerating (drag still prevents infinity in practice).
+    maxSpeed: 9999,
+    accel: 52,
     brake: 120,
-    drag: 0.32,
-    coastDrag: 0.55,
+    drag: 0.10,
+    coastDrag: 0.22,
     lateralGrip: 8.6,
     driftGrip: 3.2,
     steer: 1.95,
@@ -53,6 +54,10 @@ BASELINE AUDIT (before fixes):
     pickupRange: 11,
     arenaBounce: 0.45,
     dprCap: 2,
+    gravity: 26,
+    rampLaunchScale: 0.9,
+    steerRefSpeed: 140,
+    fxRefSpeed: 170,
     cameraLag: 0.12,
     cameraHeight: 6.2,
     cameraBack: 12.5,
@@ -73,6 +78,10 @@ BASELINE AUDIT (before fixes):
       size: 420,
       hazards: [{ x: 0, z: 0, r: 90 }, { x: -160, z: 130, r: 60 }],
       boosts: [{ x: 160, z: -140, r: 60 }, { x: -200, z: -120, r: 50 }],
+      ramps: [
+        { x: 120, z: 40, w: 18, l: 42, h: 7, yaw: 0.4 },
+        { x: -220, z: -40, w: 16, l: 36, h: 6, yaw: -0.9 },
+      ],
     },
     {
       id: 'ridge',
@@ -82,6 +91,10 @@ BASELINE AUDIT (before fixes):
       size: 520,
       hazards: [{ x: -120, z: 40, r: 70 }, { x: 140, z: 160, r: 80 }, { x: 60, z: -200, r: 60 }],
       boosts: [{ x: -220, z: -180, r: 60 }, { x: 230, z: 60, r: 60 }],
+      ramps: [
+        { x: 0, z: -260, w: 22, l: 56, h: 9, yaw: 0.0 },
+        { x: 260, z: -40, w: 18, l: 44, h: 7, yaw: 1.4 },
+      ],
     },
     {
       id: 'switch',
@@ -91,6 +104,9 @@ BASELINE AUDIT (before fixes):
       size: 360,
       hazards: [{ x: -60, z: 0, r: 60 }, { x: 80, z: -100, r: 70 }, { x: 90, z: 120, r: 60 }],
       boosts: [{ x: -180, z: -140, r: 50 }, { x: 190, z: 100, r: 40 }],
+      ramps: [
+        { x: -10, z: 160, w: 16, l: 38, h: 6, yaw: Math.PI },
+      ],
     },
     {
       id: 'dunes',
@@ -100,6 +116,10 @@ BASELINE AUDIT (before fixes):
       size: 640,
       hazards: [{ x: -200, z: 80, r: 80 }, { x: 220, z: -120, r: 90 }, { x: 0, z: 220, r: 100 }],
       boosts: [{ x: -280, z: -260, r: 80 }, { x: 280, z: 260, r: 80 }],
+      ramps: [
+        { x: -160, z: 320, w: 26, l: 70, h: 11, yaw: 0.2 },
+        { x: 220, z: 80, w: 20, l: 52, h: 8, yaw: -1.2 },
+      ],
     },
     {
       id: 'spire',
@@ -109,6 +129,9 @@ BASELINE AUDIT (before fixes):
       size: 420,
       hazards: [{ x: -140, z: -40, r: 70 }, { x: 60, z: 140, r: 70 }],
       boosts: [{ x: 160, z: -160, r: 60 }, { x: -200, z: 140, r: 50 }],
+      ramps: [
+        { x: 210, z: -10, w: 16, l: 40, h: 7, yaw: 1.55 },
+      ],
     },
     {
       id: 'endless',
@@ -118,6 +141,11 @@ BASELINE AUDIT (before fixes):
       size: 760,
       hazards: [{ x: 0, z: 0, r: 120 }, { x: 260, z: -200, r: 120 }, { x: -260, z: 200, r: 120 }],
       boosts: [{ x: -360, z: -260, r: 90 }, { x: 360, z: 260, r: 90 }],
+      ramps: [
+        { x: 0, z: -420, w: 28, l: 84, h: 14, yaw: 0 },
+        { x: 420, z: 0, w: 24, l: 72, h: 12, yaw: Math.PI / 2 },
+        { x: -380, z: -60, w: 22, l: 64, h: 10, yaw: -0.8 },
+      ],
     },
   ];
 
@@ -141,6 +169,8 @@ BASELINE AUDIT (before fixes):
     speedFxAttr: null,
     speedFxPos: null,
     particles: null,
+    ramps: [],
+    floor: null,
   };
   let renderer, scene, camera;
   let playerMesh, playerShadow;
@@ -193,6 +223,9 @@ BASELINE AUDIT (before fixes):
     lastDt: 0,
     shake: 0,
     invuln: 0,
+    grounded: true,
+    onRamp: false,
+    rampTakeoff: 0,
   };
 
   /* Boot */
@@ -810,6 +843,9 @@ BASELINE AUDIT (before fixes):
     game.pickupTimer = CFG.pickupInterval; game.rivalTimer = CFG.rivalInterval; game.autopilotTime = 0;
     game.shake = 0; game.lastDt = 0; game.steerInput = 0;
     game.invuln = 0;
+    game.grounded = true;
+    game.onRamp = false;
+    game.rampTakeoff = 0;
     game.mod = defaultMods();
     if (game.perk) applyPerk(game.perk);
     buildArena(game.map);
@@ -832,18 +868,41 @@ BASELINE AUDIT (before fixes):
     world.hazardMeshes = []; world.boostMeshes = [];
     world.hazardLights?.forEach(l => scene.remove(l)); world.hazardLights = [];
 
-    const groundMat = new THREE.MeshStandardMaterial({ color: 0x3a3937, roughness: 0.98, metalness: 0.0 });
-    const groundTex = getGroundTexture();
-    const gRepeat = def.size / 70;
-    groundTex.repeat.set(gRepeat, gRepeat);
-    groundMat.map = groundTex;
-    groundMat.map.needsUpdate = true;
+    // Entire floor = lava circles (per request).
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x24060c, roughness: 0.78, metalness: 0.0, emissive: 0x180208, emissiveIntensity: 0.7 });
+    const gRepeat = def.size / 85;
+    const lavaTex = getLavaTexture();
+    const floorTex = lavaTex.clone();
+    floorTex.needsUpdate = true;
+    floorTex.repeat.set(gRepeat, gRepeat);
+    const floorEm = lavaTex.clone();
+    floorEm.needsUpdate = true;
+    floorEm.repeat.set(gRepeat, gRepeat);
+    groundMat.map = floorTex;
+    groundMat.emissiveMap = floorEm;
+    world.floor = { map: floorTex, emissiveMap: floorEm };
     const groundSize = def.size * 3.0;
     const groundGeo = new THREE.PlaneGeometry(groundSize, groundSize, 1, 1);
     groundGeo.rotateX(-Math.PI / 2);
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.receiveShadow = true;
     world.arenaGroup.add(ground);
+
+    // Ramps (jumps)
+    world.ramps = [];
+    const rampMat = new THREE.MeshStandardMaterial({ color: 0x2a2b2f, roughness: 0.85, metalness: 0.05, emissive: 0x05060a, emissiveIntensity: 0.35, side: THREE.DoubleSide });
+    (def.ramps || []).forEach(r => {
+      const angle = Math.atan2(r.h, r.l);
+      const geo = new THREE.PlaneGeometry(r.w, r.l, 1, 1);
+      const mesh = new THREE.Mesh(geo, rampMat);
+      mesh.rotation.x = -Math.PI / 2 - angle;
+      mesh.rotation.y = r.yaw || 0;
+      mesh.position.set(r.x, r.h * 0.5, r.z);
+      mesh.receiveShadow = true;
+      mesh.castShadow = true;
+      world.arenaGroup.add(mesh);
+      world.ramps.push({ ...r, slope: r.h / r.l, dir: new THREE.Vector3(Math.sin(r.yaw || 0), 0, Math.cos(r.yaw || 0)), mesh });
+    });
 
     def.hazards?.forEach(h => {
       const geo = new THREE.CircleGeometry(h.r, 48);
@@ -982,34 +1041,35 @@ BASELINE AUDIT (before fixes):
     const right = new THREE.Vector3(forward.z, 0, -forward.x);
 
     const speedScale = Number(game.settings.speedScale || 1);
-    const maxSpeed = CFG.maxSpeed * speedScale;
-    const boostCap = maxSpeed * 1.25;
-    const speedRatio = clamp(game.speed / Math.max(1, maxSpeed), 0, 1);
+    const speed01 = clamp(game.speed / Math.max(1, CFG.steerRefSpeed * speedScale), 0, 1);
 
     const steerInput = input.steer;
     game.steerInput = steerInput;
-    const throttleCurve = 1 - Math.pow(speedRatio, CFG.throttleCurve);
+    const accel01 = clamp(game.speed / Math.max(1, CFG.fxRefSpeed * 2.5 * speedScale), 0, 1);
+    const throttleCurve = 1 - Math.pow(accel01, CFG.throttleCurve);
     const effAccel = CFG.accel * throttleCurve;
     if (input.accel) game.vel.addScaledVector(forward, effAccel * dt);
     if (input.brake) game.vel.addScaledVector(forward, -CFG.brake * dt);
 
     const steerGrip = (input.drift ? CFG.driftGrip : CFG.lateralGrip) * game.mod.grip;
-    const steerRate = (input.drift ? CFG.steerDrift : CFG.steer) * game.mod.steer * (0.55 + (1 - speedRatio) * 0.6);
+    const steerRate = (input.drift ? CFG.steerDrift : CFG.steer) * game.mod.steer * (0.55 + (1 - speed01) * 0.6);
     // Negative here makes ArrowLeft/WASD-left turn left on screen (chase camera).
-    game.yawVel = lerp(game.yawVel, (steerInput) * steerRate, dt * (input.drift ? 6 : 8));
+    game.yawVel = lerp(game.yawVel, (-steerInput) * steerRate, dt * (input.drift ? 6 : 8));
     game.yaw += game.yawVel * dt;
 
     const fSpeed = game.vel.dot(forward);
     let side = game.vel.dot(right);
     side = lerp(side, 0, dt * steerGrip);
+    const vy = game.vel.y;
     game.vel.copy(forward.clone().multiplyScalar(fSpeed)).add(right.clone().multiplyScalar(side));
+    game.vel.y = vy;
 
     const baseDrag = CFG.drag + (input.accel ? 0 : CFG.coastDrag);
-    game.vel.multiplyScalar(Math.max(0, 1 - baseDrag * dt));
-    game.speed = game.vel.length();
-    if (game.speed > boostCap) game.vel.setLength(boostCap);
-    game.speed = game.vel.length();
-    const speedNormNow = clamp(game.speed / Math.max(1, maxSpeed), 0, 1);
+    const dragMul = Math.max(0, 1 - baseDrag * dt);
+    game.vel.x *= dragMul;
+    game.vel.z *= dragMul;
+    game.speed = Math.hypot(game.vel.x, game.vel.z);
+    const speedNormNow = clamp(game.speed / Math.max(1, CFG.fxRefSpeed * speedScale), 0, 1);
     const scoreMult = 1;
 
     if (input.drift) {
@@ -1041,7 +1101,9 @@ BASELINE AUDIT (before fixes):
     }
     if (game.boostPulse > 0) { game.vel.addScaledVector(forward, CFG.boostImpulse * dt); game.boostPulse -= dt; game.shake = Math.max(game.shake, 0.25); }
 
-    game.pos.addScaledVector(game.vel, dt);
+    // Horizontal motion
+    game.pos.x += game.vel.x * dt;
+    game.pos.z += game.vel.z * dt;
     clampToArena(game.map, game.pos, game.vel);
 
     applyHazards(dt, game.pos);
@@ -1056,6 +1118,24 @@ BASELINE AUDIT (before fixes):
     game.invuln = Math.max(0, game.invuln - dt);
     game.shake = Math.max(0, game.shake - dt * 1.6);
 
+    // Vertical (ramps + jumps)
+    const g = sampleGround(game.map, game.pos.x, game.pos.z);
+    if (g.ramp) {
+      game.onRamp = true;
+      game.grounded = true;
+      game.pos.y = g.y;
+      game.vel.y = 0;
+      const along = game.vel.dot(g.ramp.dir);
+      game.rampTakeoff = Math.max(game.rampTakeoff, Math.max(0, along) * g.ramp.slope * CFG.rampLaunchScale);
+    } else {
+      if (game.onRamp && game.rampTakeoff > 0) game.vel.y = Math.max(game.vel.y, game.rampTakeoff);
+      game.onRamp = false;
+      game.rampTakeoff = 0;
+      game.vel.y -= CFG.gravity * dt;
+      game.pos.y += game.vel.y * dt;
+      if (game.pos.y <= 0) { game.pos.y = 0; game.vel.y = 0; game.grounded = true; } else game.grounded = false;
+    }
+
     updatePickups(dt);
     updateRivals(dt);
     updatePlayerMesh(forward, dt);
@@ -1066,11 +1146,15 @@ BASELINE AUDIT (before fixes):
   function clampToArena(map, pos, vel) {
     const limit = map.size;
     let bounced = false;
-    if (pos.length() > limit) {
-      const dir = pos.clone().normalize();
-      pos.copy(dir.multiplyScalar(limit * 0.995));
-      const ref = vel.clone().reflect(dir);
-      vel.copy(ref.multiplyScalar(CFG.arenaBounce));
+    const d = Math.hypot(pos.x, pos.z);
+    if (d > limit) {
+      const inv = 1 / Math.max(1e-6, d);
+      const dir = new THREE.Vector3(pos.x * inv, 0, pos.z * inv);
+      pos.x = dir.x * (limit * 0.995);
+      pos.z = dir.z * (limit * 0.995);
+      const horiz = new THREE.Vector3(vel.x, 0, vel.z).reflect(dir).multiplyScalar(CFG.arenaBounce);
+      vel.x = horiz.x;
+      vel.z = horiz.z;
       game.shake = Math.max(game.shake, 0.5);
       bounced = true;
     }
@@ -1100,6 +1184,8 @@ BASELINE AUDIT (before fixes):
   function animateArenaFx(t) {
     const lavaOx = (t * 0.03) % 1;
     const lavaOy = (t * 0.02) % 1;
+    if (world.floor?.map) world.floor.map.offset.set(lavaOx, lavaOy);
+    if (world.floor?.emissiveMap) world.floor.emissiveMap.offset.set(lavaOx, lavaOy);
     for (let i = 0; i < world.hazardMeshes.length; i++) {
       const mat = world.hazardMeshes[i].mesh.material;
       if (mat && 'emissiveIntensity' in mat) mat.emissiveIntensity = 0.95 + 0.35 * Math.sin(t * 2.8 + i);
@@ -1116,17 +1202,49 @@ BASELINE AUDIT (before fixes):
 
   // Heat/boost zones are visual-only now.
 
+  function sampleGround(map, x, z) {
+    let bestY = 0;
+    let bestRamp = null;
+    const ramps = map?.ramps || [];
+    for (let i = 0; i < ramps.length; i++) {
+      const r = ramps[i];
+      const yaw = r.yaw || 0;
+      const cos = Math.cos(-yaw);
+      const sin = Math.sin(-yaw);
+      const dx = x - r.x;
+      const dz = z - r.z;
+      const lx = dx * cos - dz * sin;
+      const lz = dx * sin + dz * cos;
+      if (Math.abs(lx) > r.w * 0.5 || lz < -r.l * 0.5 || lz > r.l * 0.5) continue;
+      const t = (lz + r.l * 0.5) / r.l;
+      const y = clamp(t, 0, 1) * r.h;
+      if (y > bestY) {
+        bestY = y;
+        bestRamp = { slope: r.h / r.l, dir: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)) };
+      }
+    }
+    return { y: bestY, ramp: bestRamp };
+  }
+
   function updatePlayerMesh(forward, dt) {
     playerMesh.position.copy(game.pos);
-    playerMesh.position.y = 0.6;
+    playerMesh.position.y = game.pos.y + 0.6;
     playerMesh.rotation.y = Math.atan2(forward.x, forward.z);
+    const pitchTarget = clamp(-game.vel.y * 0.02, -0.35, 0.35);
+    playerMesh.rotation.x = lerp(playerMesh.rotation.x || 0, pitchTarget, 0.12);
     const wheels = playerMesh.userData?.wheels;
     if (wheels && wheels.length) {
       const signedSpeed = game.vel.dot(forward);
       const spin = (signedSpeed / 0.35) * dt;
       for (let i = 0; i < wheels.length; i++) wheels[i].rotation.x += spin;
     }
-    if (playerShadow) { playerShadow.position.set(game.pos.x, 0.01, game.pos.z); playerShadow.scale.set(1, 1, 1); }
+    if (playerShadow) {
+      const h = clamp(game.pos.y, 0, 18);
+      const s = 1 / (1 + h * 0.12);
+      playerShadow.position.set(game.pos.x, 0.01, game.pos.z);
+      playerShadow.scale.set(s, s, 1);
+      playerShadow.material.opacity = 0.35 * clamp(1 - h * 0.06, 0.15, 1);
+    }
   }
 
   function updateCamera(forward) {
@@ -1144,7 +1262,7 @@ BASELINE AUDIT (before fixes):
     }
     camera.position.lerp(target, CFG.cameraLag);
     camera.lookAt(game.pos.x, game.pos.y + 1.2, game.pos.z);
-    const speedNorm = clamp(game.speed / (CFG.maxSpeed * (Number(game.settings.speedScale || 1))), 0, 1);
+    const speedNorm = clamp(game.speed / Math.max(1, CFG.fxRefSpeed * (Number(game.settings.speedScale || 1))), 0, 1);
     camera.fov = lerp(camera.fov, CFG.fovBase + speedNorm * CFG.fovBoost, 0.12);
     camera.updateProjectionMatrix();
   }
@@ -1220,12 +1338,11 @@ BASELINE AUDIT (before fixes):
     game.rivalTimer -= dt;
     if (game.rivalTimer <= 0 && activeRivals.length < CFG.rivalMax) { spawnRival(); game.rivalTimer = CFG.rivalInterval; }
     const speedScale = Number(game.settings.speedScale || 1);
-    const playerTop = CFG.maxSpeed * speedScale;
-    const rivalTop = playerTop * CFG.rivalMaxFactor;
+    const rivalTop = Math.max(65, game.speed * 0.78 + 35);
     for (let i = activeRivals.length - 1; i >= 0; i--) {
       const r = activeRivals[i];
       r.hitCd = Math.max(0, (r.hitCd || 0) - dt);
-      const toPlayer = game.pos.clone().sub(r.pos);
+      const toPlayer = new THREE.Vector3(game.pos.x - r.pos.x, 0, game.pos.z - r.pos.z);
       const dir = toPlayer.clone();
       if (dir.lengthSq() > 1e-8) dir.normalize();
       else dir.set(Math.cos(i), 0, Math.sin(i));
@@ -1245,38 +1362,16 @@ BASELINE AUDIT (before fixes):
       r.mesh.rotation.y = r.yaw;
 
       r.nearCd = Math.max(0, (r.nearCd || 0) - dt);
-      const dz = game.pos.clone().sub(r.pos).length();
+      const dz = Math.hypot(game.pos.x - r.pos.x, game.pos.z - r.pos.z);
       if (dz > 3 && dz < 8 && r.nearCd <= 0) {
         addCombo(0.12);
         game.score += 18;
         r.nearCd = 1;
       }
-      if (dz < 2.85 && r.hitCd <= 0 && game.invuln <= 0) {
-        const minDist = 2.85;
-        const n = game.pos.clone().sub(r.pos);
-        if (n.lengthSq() < 1e-8) n.copy(game.vel).sub(r.vel);
-        if (n.lengthSq() < 1e-8) n.set((Math.random() - 0.5), 0, (Math.random() - 0.5));
-        n.y = 0;
-        n.normalize();
-
-        const penetration = Math.max(0, minDist - dz);
-        if (Number.isFinite(penetration) && penetration > 0) {
-          game.pos.addScaledVector(n, penetration * 0.58);
-          r.pos.addScaledVector(n, -penetration * 0.58);
-        }
-
-        // Damped "swap" of normal velocity components to avoid infinite spin/overlap.
-        const vpn = game.vel.dot(n);
-        const vrn = r.vel.dot(n);
-        if (Number.isFinite(vpn) && Number.isFinite(vrn)) {
-          const damp = 0.55;
-          game.vel.addScaledVector(n, (vrn - vpn) * damp);
-          r.vel.addScaledVector(n, (vpn - vrn) * damp);
-        }
-
+      if (dz < 2.85 && r.hitCd <= 0 && game.invuln <= 0 && game.pos.y < 1.2) {
         respawnPlayer();
-
-        r.hitCd = 0.35;
+        r.vel.multiplyScalar(0.6);
+        r.hitCd = 0.6;
       }
     }
   }
@@ -1300,6 +1395,7 @@ BASELINE AUDIT (before fixes):
     }
 
     if (best) game.pos.copy(best);
+    game.pos.y = 0;
     game.vel.set(0, 0, 0);
     game.yaw = Math.random() * Math.PI * 2;
     game.yawVel = 0;
