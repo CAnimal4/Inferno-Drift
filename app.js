@@ -1,4 +1,4 @@
-﻿/*
+/*
 InfernoDrift2 -- static Three.js open-arena racer (no build)
 Run: `python -m http.server` then open http://localhost:8000
 Controls (desktop): W/Up throttle, S/Down brake, A/Left steer left, D/Right steer right, Space drift (charge), Shift boost, F fullscreen, Esc pause, ~ debug.
@@ -948,8 +948,7 @@ BASELINE AUDIT (before fixes):
     const rightDown = keys[right] || touch.right;
     return {
       // Steer axis: left is positive, right is negative; yaw application below converts to screen-correct turn.
-      // Steer axis: left is negative, right is positive (standard) 
-      steer: (rightDown ? 1 : 0) - (leftDown ? 1 : 0),
+      steer: (leftDown ? 1 : 0) - (rightDown ? 1 : 0),
       left: leftDown,
       right: rightDown,
       accel: keys[up] || touch.accel || false,
@@ -1462,4 +1461,3 @@ BASELINE AUDIT (before fixes):
     osc.start(); osc.stop(tone.ctx.currentTime + dur);
   }
 })();
-
