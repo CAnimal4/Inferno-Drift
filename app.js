@@ -1,4 +1,4 @@
-/*
+﻿/*
 InfernoDrift2 -- static Three.js open-arena racer (no build)
 Run: `python -m http.server` then open http://localhost:8000
 Controls (desktop): W/Up throttle, S/Down brake, A/Left steer left, D/Right steer right, Space drift (charge), Shift boost, F fullscreen, Esc pause, ~ debug.
@@ -46,17 +46,9 @@ BASELINE AUDIT (before fixes):
     boostDrain: 28,
     boostImpulse: 55,
     boostGain: 1.0,
-    maxHeat: 100,
-    heatGainDrift: 16,
-    heatGainBoost: 22,
-    heatGainHazard: 40,
-    heatCool: 10,
-    hazardSlow: 0.75,
-    heatCashBase: 90,
-    heatCashPerPoint: 10,
     pickupInterval: 7,
-    rivalInterval: 5,
-    rivalMax: 6,
+    rivalInterval: 8,
+    rivalMax: 3,
     pickupMax: 6,
     pickupRange: 11,
     arenaBounce: 0.45,
@@ -131,12 +123,10 @@ BASELINE AUDIT (before fixes):
 
   /* Perks */
   const PERKS = [
-    { id: 'cool', name: 'Heat Bank', desc: 'Coolant cash-in +25%.', apply: g => g.mod.heatCash *= 1.25 },
     { id: 'grip', name: 'Grip Gel', desc: 'Grip up, cornering is steadier.', apply: g => { g.mod.grip *= 1.14; } },
     { id: 'boost', name: 'Ion Boost', desc: 'Boost gain +20%, drain -10%.', apply: g => { g.mod.boostGain *= 1.2; g.mod.boostDrain *= 0.9; } },
-    { id: 'shield', name: 'Phase Shield', desc: 'Start with one shield hit.', apply: g => { g.mod.shield = true; } },
     { id: 'magnet', name: 'Pick Magnet', desc: 'Pickups pull from farther.', apply: g => { g.mod.pickRange *= 1.4; } },
-    { id: 'resist', name: 'Lava Treads', desc: 'Hazard slowdown -25%.', apply: g => { g.mod.hazardSlow *= 0.75; } },
+    { id: 'steer', name: 'Quick Rack', desc: 'Steering response +12%.', apply: g => { g.mod.steer *= 1.12; } },
   ];
 
   /* DOM refs */
@@ -202,6 +192,7 @@ BASELINE AUDIT (before fixes):
     steerInput: 0,
     lastDt: 0,
     shake: 0,
+    invuln: 0,
   };
 
   /* Boot */
@@ -276,7 +267,7 @@ BASELINE AUDIT (before fixes):
   }
 
   function defaultMods() {
-    return { coolRate: 1, grip: 1, steer: 1, boostGain: 1, boostDrain: 1, hazardSlow: 1, pickRange: 1, heatCash: 1, shield: false };
+    return { grip: 1, steer: 1, boostGain: 1, boostDrain: 1, pickRange: 1 };
   }
 
   function loadSettings() {
@@ -295,38 +286,58 @@ BASELINE AUDIT (before fixes):
     const c = document.createElement('canvas');
     c.width = 512; c.height = 512;
     const ctx = c.getContext('2d');
-    ctx.fillStyle = '#0b1220';
+    ctx.fillStyle = '#2b2a28';
     ctx.fillRect(0, 0, c.width, c.height);
-    const g = ctx.createRadialGradient(256, 256, 10, 256, 256, 340);
-    g.addColorStop(0, 'rgba(255,159,64,0.10)');
-    g.addColorStop(1, 'rgba(92,123,255,0.00)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, c.width, c.height);
-    for (let i = 0; i < 14000; i++) {
+
+    // Large blotches (mud/ash patches)
+    for (let i = 0; i < 1600; i++) {
       const x = Math.random() * c.width;
       const y = Math.random() * c.height;
-      const v = 10 + Math.random() * 35;
-      ctx.fillStyle = `rgba(${v},${v + 6},${v + 18},${Math.random() * 0.10})`;
+      const r = 8 + Math.random() * 55;
+      const v = 38 + Math.random() * 50;
+      const a = 0.04 + Math.random() * 0.08;
+      const gg = ctx.createRadialGradient(x, y, 2, x, y, r);
+      gg.addColorStop(0, `rgba(${v},${v - 4},${v - 8},${a})`);
+      gg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = gg;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Fine grain
+    for (let i = 0; i < 52000; i++) {
+      const x = (Math.random() * c.width) | 0;
+      const y = (Math.random() * c.height) | 0;
+      const v = 40 + (Math.random() * 70) | 0;
+      ctx.fillStyle = `rgba(${v},${v - 3},${v - 8},${Math.random() * 0.06})`;
       ctx.fillRect(x, y, 1, 1);
     }
-    ctx.globalAlpha = 0.18;
-    ctx.strokeStyle = '#7cf0d8';
-    ctx.lineWidth = 1;
-    for (let x = 0; x <= c.width; x += 64) { ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, c.height); ctx.stroke(); }
-    for (let y = 0; y <= c.height; y += 64) { ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(c.width, y + 0.5); ctx.stroke(); }
-    ctx.globalAlpha = 1;
-    // Crack/vein lines for readability at speed.
-    ctx.globalAlpha = 0.22;
-    ctx.lineWidth = 2;
-    for (let i = 0; i < 34; i++) {
+
+    // Sparse pebbles
+    for (let i = 0; i < 2200; i++) {
+      const x = Math.random() * c.width;
+      const y = Math.random() * c.height;
+      const r = 0.6 + Math.random() * 1.9;
+      const v = 60 + (Math.random() * 70) | 0;
+      ctx.fillStyle = `rgba(${v},${v},${v + 4},${0.10 + Math.random() * 0.18})`;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Subtle tire streaks
+    ctx.globalAlpha = 0.12;
+    ctx.lineWidth = 6;
+    for (let i = 0; i < 36; i++) {
       const x0 = Math.random() * c.width;
       const y0 = Math.random() * c.height;
-      const x1 = x0 + (Math.random() - 0.5) * 180;
-      const y1 = y0 + (Math.random() - 0.5) * 180;
-      ctx.strokeStyle = `rgba(255,95,122,${0.08 + Math.random() * 0.12})`;
+      const x1 = x0 + (Math.random() - 0.5) * 420;
+      const y1 = y0 + (Math.random() - 0.5) * 420;
+      ctx.strokeStyle = `rgb(${18 + (Math.random() * 12) | 0},${18 + (Math.random() * 12) | 0},${18 + (Math.random() * 12) | 0})`;
       ctx.beginPath();
       ctx.moveTo(x0, y0);
-      ctx.quadraticCurveTo((x0 + x1) * 0.5 + (Math.random() - 0.5) * 90, (y0 + y1) * 0.5 + (Math.random() - 0.5) * 90, x1, y1);
+      ctx.quadraticCurveTo((x0 + x1) * 0.5 + (Math.random() - 0.5) * 160, (y0 + y1) * 0.5 + (Math.random() - 0.5) * 160, x1, y1);
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
@@ -798,6 +809,7 @@ BASELINE AUDIT (before fixes):
     game.speed = 0; game.drift = 0; game.boost = 0; game.boostPulse = 0; game.heat = 0; game.combo = 1; game.comboTimer = 0; game.score = 0; game.runTime = 0;
     game.pickupTimer = CFG.pickupInterval; game.rivalTimer = CFG.rivalInterval; game.autopilotTime = 0;
     game.shake = 0; game.lastDt = 0; game.steerInput = 0;
+    game.invuln = 0;
     game.mod = defaultMods();
     if (game.perk) applyPerk(game.perk);
     buildArena(game.map);
@@ -820,30 +832,18 @@ BASELINE AUDIT (before fixes):
     world.hazardMeshes = []; world.boostMeshes = [];
     world.hazardLights?.forEach(l => scene.remove(l)); world.hazardLights = [];
 
-    const groundMat = new THREE.MeshStandardMaterial({ color: 0x0b1220, roughness: 0.9, metalness: 0.05, emissive: 0x060813, emissiveIntensity: 0.35 });
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x3a3937, roughness: 0.98, metalness: 0.0 });
     const groundTex = getGroundTexture();
-    groundTex.repeat.set(def.size / 110, def.size / 110);
+    const gRepeat = def.size / 70;
+    groundTex.repeat.set(gRepeat, gRepeat);
     groundMat.map = groundTex;
     groundMat.map.needsUpdate = true;
-    const groundGeo = new THREE.CircleGeometry(def.size * 1.4, 96);
+    const groundSize = def.size * 3.0;
+    const groundGeo = new THREE.PlaneGeometry(groundSize, groundSize, 1, 1);
     groundGeo.rotateX(-Math.PI / 2);
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.receiveShadow = true;
     world.arenaGroup.add(ground);
-
-    const edgeGeo = new THREE.RingGeometry(def.size * 0.98, def.size * 1.02, 96);
-    edgeGeo.rotateX(-Math.PI / 2);
-    const edgeMat = new THREE.MeshBasicMaterial({ color: 0x445, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
-    const edge = new THREE.Mesh(edgeGeo, edgeMat);
-    edge.renderOrder = 2;
-    world.arenaGroup.add(edge);
-
-    const wallGeo = new THREE.CylinderGeometry(def.size * 1.03, def.size * 1.03, 58, 80, 1, true);
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x070a12, roughness: 0.92, metalness: 0.05, emissive: 0x050817, emissiveIntensity: 0.25, side: THREE.BackSide });
-    const wall = new THREE.Mesh(wallGeo, wallMat);
-    wall.position.y = 29;
-    wall.receiveShadow = true;
-    world.arenaGroup.add(wall);
 
     def.hazards?.forEach(h => {
       const geo = new THREE.CircleGeometry(h.r, 48);
@@ -996,7 +996,7 @@ BASELINE AUDIT (before fixes):
     const steerGrip = (input.drift ? CFG.driftGrip : CFG.lateralGrip) * game.mod.grip;
     const steerRate = (input.drift ? CFG.steerDrift : CFG.steer) * game.mod.steer * (0.55 + (1 - speedRatio) * 0.6);
     // Negative here makes ArrowLeft/WASD-left turn left on screen (chase camera).
-    game.yawVel = lerp(game.yawVel, (-steerInput) * steerRate, dt * (input.drift ? 6 : 8));
+    game.yawVel = lerp(game.yawVel, (steerInput) * steerRate, dt * (input.drift ? 6 : 8));
     game.yaw += game.yawVel * dt;
 
     const fSpeed = game.vel.dot(forward);
@@ -1010,13 +1010,11 @@ BASELINE AUDIT (before fixes):
     if (game.speed > boostCap) game.vel.setLength(boostCap);
     game.speed = game.vel.length();
     const speedNormNow = clamp(game.speed / Math.max(1, maxSpeed), 0, 1);
-    const heat01 = clamp(game.heat / CFG.maxHeat, 0, 1);
-    const scoreMult = 1 + heat01 * 0.65;
+    const scoreMult = 1;
 
     if (input.drift) {
       game.drift = clamp(game.drift + CFG.driftGain * dt, 0, 100);
       game.speed *= 0.995;
-      game.heat += CFG.heatGainDrift * dt;
       game.drifting = true;
       if (game.drift > 25) { addCombo(0.05 * dt); game.score += 3 * dt * scoreMult; }
     } else if (game.drifting) {
@@ -1039,7 +1037,6 @@ BASELINE AUDIT (before fixes):
     if (input.boost && game.boost > 0) {
       game.vel.addScaledVector(forward, CFG.boostPower * dt);
       game.boost = clamp(game.boost - CFG.boostDrain * dt * game.mod.boostDrain, 0, 140);
-      game.heat += CFG.heatGainBoost * dt;
       game.shake = Math.max(game.shake, 0.35);
     }
     if (game.boostPulse > 0) { game.vel.addScaledVector(forward, CFG.boostImpulse * dt); game.boostPulse -= dt; game.shake = Math.max(game.shake, 0.25); }
@@ -1048,8 +1045,6 @@ BASELINE AUDIT (before fixes):
     clampToArena(game.map, game.pos, game.vel);
 
     applyHazards(dt, game.pos);
-    applyBoostPads(dt, game.pos, forward);
-    applyHeat(dt);
     animateArenaFx(game.runTime);
     updateSpeedFx(dt, speedNormNow, !!(input.boost || game.boostPulse > 0.01));
     updateParticles(dt, forward, input);
@@ -1058,6 +1053,7 @@ BASELINE AUDIT (before fixes):
     if (game.comboTimer <= 0) game.combo = Math.max(1, game.combo - 0.2 * dt);
     game.score += (game.speed * 0.06 + (input.drift ? 3 : 0)) * dt * game.combo * scoreMult;
 
+    game.invuln = Math.max(0, game.invuln - dt);
     game.shake = Math.max(0, game.shake - dt * 1.6);
 
     updatePickups(dt);
@@ -1075,33 +1071,28 @@ BASELINE AUDIT (before fixes):
       pos.copy(dir.multiplyScalar(limit * 0.995));
       const ref = vel.clone().reflect(dir);
       vel.copy(ref.multiplyScalar(CFG.arenaBounce));
-      game.heat += 6;
       game.shake = Math.max(game.shake, 0.5);
       bounced = true;
     }
-    if (bounced && game.mod.shield) game.mod.shield = false;
   }
 
   function applyHazards(dt, pos) {
+    // Visual-only lava embers; no slowdown/overheat mechanics.
     game.map.hazards?.forEach(h => {
       const d2 = (pos.x - h.x) ** 2 + (pos.z - h.z) ** 2;
-      if (d2 < h.r * h.r) {
-        game.heat += CFG.heatGainHazard * dt;
-        game.vel.multiplyScalar(Math.max(0, 1 - CFG.hazardSlow * dt * game.mod.hazardSlow));
-        if (Math.random() < 10 * dt) {
-          const ang = Math.random() * Math.PI * 2;
-          const rr = Math.sqrt(Math.random()) * h.r;
-          spawnParticle(
-            h.x + Math.cos(ang) * rr,
-            0.2 + Math.random() * 0.2,
-            h.z + Math.sin(ang) * rr,
-            (Math.random() - 0.5) * 3.0,
-            3.0 + Math.random() * 2.5,
-            (Math.random() - 0.5) * 3.0,
-            1.0, 0.45 + Math.random() * 0.2, 0.25,
-            0.35 + Math.random() * 0.35
-          );
-        }
+      if (d2 < h.r * h.r && Math.random() < 10 * dt) {
+        const ang = Math.random() * Math.PI * 2;
+        const rr = Math.sqrt(Math.random()) * h.r;
+        spawnParticle(
+          h.x + Math.cos(ang) * rr,
+          0.2 + Math.random() * 0.2,
+          h.z + Math.sin(ang) * rr,
+          (Math.random() - 0.5) * 3.0,
+          3.0 + Math.random() * 2.5,
+          (Math.random() - 0.5) * 3.0,
+          1.0, 0.45 + Math.random() * 0.2, 0.25,
+          0.35 + Math.random() * 0.35
+        );
       }
     });
   }
@@ -1123,20 +1114,7 @@ BASELINE AUDIT (before fixes):
     }
   }
 
-  function applyBoostPads(dt, pos, forward) {
-    game.map.boosts?.forEach(b => {
-      const d2 = (pos.x - b.x) ** 2 + (pos.z - b.z) ** 2;
-      if (d2 < b.r * b.r) {
-        game.boost = clamp(game.boost + 16 * dt, 0, 140);
-        game.vel.addScaledVector(forward, CFG.boostPower * 0.28 * dt);
-        game.shake = Math.max(game.shake, 0.18);
-      }
-    });
-  }
-
-  function applyHeat(dt) {
-    game.heat = clamp(game.heat - CFG.heatCool * dt * game.mod.coolRate, 0, CFG.maxHeat);
-  }
+  // Heat/boost zones are visual-only now.
 
   function updatePlayerMesh(forward, dt) {
     playerMesh.position.copy(game.pos);
@@ -1203,9 +1181,9 @@ BASELINE AUDIT (before fixes):
       if (!insideHazard(game.map, pos)) break;
     }
     if (!pos) pos = new THREE.Vector3();
-    const type = pick(['cool', 'cell', 'shield', 'coin']);
-    const colors = { cool: 0x7cf0d8, cell: 0xffd15a, shield: 0x7ab7ff, coin: 0xff9f40 };
-    mesh.material.color.setHex(colors[type]); mesh.material.emissive.setHex(colors[type]);
+    const type = 'coin';
+    mesh.material.color.setHex(0xff9f40);
+    mesh.material.emissive.setHex(0xff9f40);
     activePickups.push({ pos, type, mesh });
   }
 
@@ -1217,26 +1195,11 @@ BASELINE AUDIT (before fixes):
   }
 
   function collectPickup(p) {
-    const heat01 = clamp(game.heat / CFG.maxHeat, 0, 1);
-    const scoreMult = 1 + heat01 * 0.65;
-    if (p.type === 'cool') {
-      const payout = (CFG.heatCashBase + game.heat * CFG.heatCashPerPoint) * game.mod.heatCash;
-      game.score += payout * game.combo;
-      game.heat = 0;
-      addCombo(0.8);
-      setToast('Coolant: cashed heat!');
-      playTone(740, 0.08, 0.12);
-    } else if (p.type === 'cell') {
-      game.boost = clamp(game.boost + 45, 0, 140);
-      playTone(520, 0.08, 0.12);
-    } else if (p.type === 'shield') {
-      game.mod.shield = true;
-      setToast('Shield ready');
-      playTone(560, 0.08, 0.12);
-    } else if (p.type === 'coin') {
-      game.score += 180 * game.combo * scoreMult;
+    if (p.type === 'coin') {
+      game.score += 180 * game.combo;
       addCombo(0.5);
       playTone(480, 0.06, 0.12);
+      setToast('Coin');
     }
     p.mesh.visible = false;
   }
@@ -1285,11 +1248,10 @@ BASELINE AUDIT (before fixes):
       const dz = game.pos.clone().sub(r.pos).length();
       if (dz > 3 && dz < 8 && r.nearCd <= 0) {
         addCombo(0.12);
-        const heat01 = clamp(game.heat / CFG.maxHeat, 0, 1);
-        game.score += 18 * (1 + heat01 * 0.65);
+        game.score += 18;
         r.nearCd = 1;
       }
-      if (dz < 2.85 && r.hitCd <= 0) {
+      if (dz < 2.85 && r.hitCd <= 0 && game.invuln <= 0) {
         const minDist = 2.85;
         const n = game.pos.clone().sub(r.pos);
         if (n.lengthSq() < 1e-8) n.copy(game.vel).sub(r.vel);
@@ -1312,17 +1274,44 @@ BASELINE AUDIT (before fixes):
           r.vel.addScaledVector(n, (vpn - vrn) * damp);
         }
 
-        if (game.mod.shield) { game.mod.shield = false; setToast('Shield broke'); playTone(260, 0.06, 0.1); }
-        else bump();
+        respawnPlayer();
 
         r.hitCd = 0.35;
       }
     }
   }
 
+  function respawnPlayer() {
+    const map = game.map;
+    if (!map) return;
+
+    let best = null;
+    let bestScore = -Infinity;
+    for (let i = 0; i < 18; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const rr = Math.random() * map.size * 0.85;
+      const p = new THREE.Vector3(Math.cos(ang) * rr, 0, Math.sin(ang) * rr);
+      let minD2 = Infinity;
+      for (let j = 0; j < activeRivals.length; j++) {
+        const d2 = p.distanceToSquared(activeRivals[j].pos);
+        if (d2 < minD2) minD2 = d2;
+      }
+      if (minD2 > bestScore) { bestScore = minD2; best = p; }
+    }
+
+    if (best) game.pos.copy(best);
+    game.vel.set(0, 0, 0);
+    game.yaw = Math.random() * Math.PI * 2;
+    game.yawVel = 0;
+    game.invuln = 1.25;
+    game.shake = Math.max(game.shake, 0.8);
+    addCombo(-1.0);
+    setToast('Respawn');
+    playTone(240, 0.07, 0.12);
+  }
+
   function bump() {
     game.vel.multiplyScalar(0.7);
-    game.heat += 8;
     addCombo(-0.5);
     playTone(220, 0.08, 0.14);
     game.shake = Math.max(game.shake, 0.6);
@@ -1350,7 +1339,7 @@ BASELINE AUDIT (before fixes):
       debugBox.textContent = [
         `fps ${game.fps.toFixed(0)} dt ${game.lastDt.toFixed(3)}`,
         `spd ${game.speed.toFixed(1)} steer ${game.steerInput.toFixed(2)} drifting ${game.drifting ? 'Y' : 'N'} shake ${game.shake.toFixed(2)}`,
-        `drift ${game.drift.toFixed(1)} heat ${game.heat.toFixed(1)} boost ${game.boost.toFixed(1)} combo x${game.combo.toFixed(1)}`,
+        `drift ${game.drift.toFixed(1)} boost ${game.boost.toFixed(1)} combo x${game.combo.toFixed(1)} invuln ${game.invuln.toFixed(2)}`,
         `score ${game.score.toFixed(0)} pos ${game.pos.x.toFixed(1)},${game.pos.z.toFixed(1)}`,
         `map ${MAPS[game.mapIndex].id} rivals ${activeRivals.length} pickups ${activePickups.length}`,
       ].join('\\n');
@@ -1362,7 +1351,6 @@ BASELINE AUDIT (before fixes):
     ui.hudScore.textContent = game.score.toFixed(0);
     ui.hudCombo.textContent = `x${game.combo.toFixed(1)}`;
     ui.hudLap.textContent = `${MAPS[game.mapIndex].name} - ${game.runTime.toFixed(1)}s`;
-    ui.heatBar.style.width = `${game.heat}%`;
     ui.driftBar.style.width = `${game.drift}%`;
     ui.boostBar.style.width = `${game.boost / 1.4}%`;
   }
