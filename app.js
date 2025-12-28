@@ -948,7 +948,8 @@ BASELINE AUDIT (before fixes):
     const rightDown = keys[right] || touch.right;
     return {
       // Steer axis: left is positive, right is negative; yaw application below converts to screen-correct turn.
-      steer: (leftDown ? 1 : 0) - (rightDown ? 1 : 0),
+      // Steer axis: left is negative, right is positive (standard) 
+      steer: (rightDown ? 1 : 0) - (leftDown ? 1 : 0),
       left: leftDown,
       right: rightDown,
       accel: keys[up] || touch.accel || false,
@@ -1461,3 +1462,4 @@ BASELINE AUDIT (before fixes):
     osc.start(); osc.stop(tone.ctx.currentTime + dur);
   }
 })();
+
