@@ -81,6 +81,17 @@ BASELINE AUDIT (before fixes):
       ramps: [
         { x: 120, z: 40, w: 18, l: 42, h: 7, yaw: 0.4 },
         { x: -220, z: -40, w: 16, l: 36, h: 6, yaw: -0.9 },
+        { x: 0, z: -260, w: 24, l: 70, h: 10, yaw: 0.0 },
+        { x: 260, z: 0, w: 20, l: 58, h: 9, yaw: 1.57 },
+        { x: -260, z: 0, w: 20, l: 58, h: 9, yaw: -1.57 },
+        { x: 0, z: 260, w: 22, l: 64, h: 9, yaw: 3.14 },
+      ],
+      platforms: [
+        { x: 0, z: -340, w: 120, l: 90, y: 10, yaw: 0.0 },
+        { x: 340, z: 0, w: 90, l: 120, y: 10, yaw: 1.57 },
+      ],
+      rings: [
+        { x: 0, z: 0, inner: 70, outer: 100, y: 6 },
       ],
     },
     {
@@ -94,6 +105,13 @@ BASELINE AUDIT (before fixes):
       ramps: [
         { x: 0, z: -260, w: 22, l: 56, h: 9, yaw: 0.0 },
         { x: 260, z: -40, w: 18, l: 44, h: 7, yaw: 1.4 },
+        { x: -260, z: 160, w: 20, l: 52, h: 8, yaw: -2.0 },
+      ],
+      platforms: [
+        { x: -360, z: 140, w: 110, l: 70, y: 9, yaw: -0.3 },
+      ],
+      rings: [
+        { x: 160, z: 220, inner: 55, outer: 78, y: 7 },
       ],
     },
     {
@@ -106,6 +124,11 @@ BASELINE AUDIT (before fixes):
       boosts: [{ x: -180, z: -140, r: 50 }, { x: 190, z: 100, r: 40 }],
       ramps: [
         { x: -10, z: 160, w: 16, l: 38, h: 6, yaw: Math.PI },
+        { x: 160, z: -10, w: 16, l: 40, h: 7, yaw: Math.PI / 2 },
+        { x: -160, z: 10, w: 16, l: 40, h: 7, yaw: -Math.PI / 2 },
+      ],
+      platforms: [
+        { x: 0, z: 0, w: 120, l: 120, y: 6, yaw: 0 },
       ],
     },
     {
@@ -119,6 +142,10 @@ BASELINE AUDIT (before fixes):
       ramps: [
         { x: -160, z: 320, w: 26, l: 70, h: 11, yaw: 0.2 },
         { x: 220, z: 80, w: 20, l: 52, h: 8, yaw: -1.2 },
+        { x: 0, z: -420, w: 28, l: 82, h: 13, yaw: 0 },
+      ],
+      rings: [
+        { x: -240, z: -120, inner: 75, outer: 102, y: 8 },
       ],
     },
     {
@@ -131,6 +158,10 @@ BASELINE AUDIT (before fixes):
       boosts: [{ x: 160, z: -160, r: 60 }, { x: -200, z: 140, r: 50 }],
       ramps: [
         { x: 210, z: -10, w: 16, l: 40, h: 7, yaw: 1.55 },
+        { x: -210, z: 20, w: 18, l: 50, h: 9, yaw: -1.55 },
+      ],
+      platforms: [
+        { x: 0, z: 260, w: 160, l: 90, y: 10, yaw: 0.25 },
       ],
     },
     {
@@ -145,6 +176,15 @@ BASELINE AUDIT (before fixes):
         { x: 0, z: -420, w: 28, l: 84, h: 14, yaw: 0 },
         { x: 420, z: 0, w: 24, l: 72, h: 12, yaw: Math.PI / 2 },
         { x: -380, z: -60, w: 22, l: 64, h: 10, yaw: -0.8 },
+        { x: 0, z: 520, w: 30, l: 92, h: 16, yaw: Math.PI },
+        { x: -520, z: 0, w: 26, l: 80, h: 14, yaw: -Math.PI / 2 },
+      ],
+      platforms: [
+        { x: 0, z: -560, w: 200, l: 110, y: 12, yaw: 0 },
+        { x: 560, z: 0, w: 120, l: 200, y: 12, yaw: Math.PI / 2 },
+      ],
+      rings: [
+        { x: 0, z: 0, inner: 110, outer: 155, y: 9 },
       ],
     },
   ];
@@ -387,40 +427,60 @@ BASELINE AUDIT (before fixes):
     const c = document.createElement('canvas');
     c.width = 256; c.height = 256;
     const ctx = c.getContext('2d');
-    ctx.fillStyle = '#14050a';
+    // Flow texture (no obvious circular blobs).
+    ctx.fillStyle = '#0f0307';
     ctx.fillRect(0, 0, c.width, c.height);
-    const g = ctx.createRadialGradient(128, 128, 10, 128, 128, 140);
-    g.addColorStop(0, 'rgba(255,95,122,0.95)');
-    g.addColorStop(0.45, 'rgba(255,107,74,0.65)');
-    g.addColorStop(1, 'rgba(20,5,10,0.0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, c.width, c.height);
+
+    // Hot streaks
     ctx.globalCompositeOperation = 'screen';
-    for (let i = 0; i < 180; i++) {
-      const x = Math.random() * c.width;
+    for (let i = 0; i < 520; i++) {
       const y = Math.random() * c.height;
-      const r = 6 + Math.random() * 24;
-      const a = 0.08 + Math.random() * 0.18;
-      const gg = ctx.createRadialGradient(x, y, 1, x, y, r);
-      gg.addColorStop(0, `rgba(255,209,90,${a})`);
-      gg.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = gg;
+      const x = Math.random() * c.width;
+      const len = 40 + Math.random() * 160;
+      const thick = 2 + Math.random() * 10;
+      const ang = (Math.random() - 0.5) * 0.9; // mostly horizontal
+      const x1 = x + Math.cos(ang) * len;
+      const y1 = y + Math.sin(ang) * len;
+      const g = ctx.createLinearGradient(x, y, x1, y1);
+      g.addColorStop(0, `rgba(255,90,70,${0.0})`);
+      g.addColorStop(0.2, `rgba(255,90,70,${0.12 + Math.random() * 0.14})`);
+      g.addColorStop(0.6, `rgba(255,209,90,${0.10 + Math.random() * 0.14})`);
+      g.addColorStop(1, `rgba(255,209,90,0.0)`);
+      ctx.strokeStyle = g;
+      ctx.lineWidth = thick;
       ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(x, y);
+      ctx.quadraticCurveTo(
+        (x + x1) * 0.5 + (Math.random() - 0.5) * 60,
+        (y + y1) * 0.5 + (Math.random() - 0.5) * 60,
+        x1,
+        y1
+      );
+      ctx.stroke();
+    }
+
+    // Fine grain glow
+    for (let i = 0; i < 22000; i++) {
+      const x = (Math.random() * c.width) | 0;
+      const y = (Math.random() * c.height) | 0;
+      const a = Math.random() * 0.06;
+      ctx.fillStyle = `rgba(255,140,90,${a})`;
+      ctx.fillRect(x, y, 1, 1);
     }
     ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = 0.35;
-    ctx.strokeStyle = 'rgba(0,0,0,0.75)';
-    ctx.lineWidth = 3;
-    for (let i = 0; i < 28; i++) {
+
+    // Dark cracks
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.lineWidth = 2.5;
+    for (let i = 0; i < 42; i++) {
       const x0 = Math.random() * c.width;
       const y0 = Math.random() * c.height;
-      const x1 = x0 + (Math.random() - 0.5) * 140;
-      const y1 = y0 + (Math.random() - 0.5) * 140;
+      const x1 = x0 + (Math.random() - 0.5) * 200;
+      const y1 = y0 + (Math.random() - 0.5) * 200;
       ctx.beginPath();
       ctx.moveTo(x0, y0);
-      ctx.quadraticCurveTo((x0 + x1) * 0.5 + (Math.random() - 0.5) * 80, (y0 + y1) * 0.5 + (Math.random() - 0.5) * 80, x1, y1);
+      ctx.quadraticCurveTo((x0 + x1) * 0.5 + (Math.random() - 0.5) * 120, (y0 + y1) * 0.5 + (Math.random() - 0.5) * 120, x1, y1);
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
@@ -888,54 +948,79 @@ BASELINE AUDIT (before fixes):
     ground.receiveShadow = true;
     world.arenaGroup.add(ground);
 
-    // Ramps (jumps)
+    function makeWedgeGeometry(w, l, h) {
+      const hw = w * 0.5;
+      const hl = l * 0.5;
+      const verts = new Float32Array([
+        // bottom
+        -hw, 0, -hl,
+         hw, 0, -hl,
+         hw, 0,  hl,
+        -hw, 0,  hl,
+        // top (start is 0, end is h)
+        -hw, 0, -hl,
+         hw, 0, -hl,
+         hw, h,  hl,
+        -hw, h,  hl,
+      ]);
+      const idx = [
+        // bottom
+        0, 2, 1, 0, 3, 2,
+        // top
+        4, 5, 6, 4, 6, 7,
+        // left
+        0, 4, 7, 0, 7, 3,
+        // right
+        1, 2, 6, 1, 6, 5,
+        // back (low end)
+        0, 1, 5, 0, 5, 4,
+        // front (high end)
+        3, 7, 6, 3, 6, 2,
+      ];
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      return g;
+    }
+
+    // Ramps (jumps) + platforms/rings (stunt park)
     world.ramps = [];
-    const rampMat = new THREE.MeshStandardMaterial({ color: 0x2a2b2f, roughness: 0.85, metalness: 0.05, emissive: 0x05060a, emissiveIntensity: 0.35, side: THREE.DoubleSide });
+    const rampMat = new THREE.MeshStandardMaterial({ color: 0x2a2b2f, roughness: 0.82, metalness: 0.06, emissive: 0x080a0f, emissiveIntensity: 0.35 });
     (def.ramps || []).forEach(r => {
-      const angle = Math.atan2(r.h, r.l);
-      const geo = new THREE.PlaneGeometry(r.w, r.l, 1, 1);
+      const geo = makeWedgeGeometry(r.w, r.l, r.h);
       const mesh = new THREE.Mesh(geo, rampMat);
-      mesh.rotation.x = -Math.PI / 2 - angle;
       mesh.rotation.y = r.yaw || 0;
-      mesh.position.set(r.x, r.h * 0.5, r.z);
+      mesh.position.set(r.x, r.h * 0.25, r.z);
       mesh.receiveShadow = true;
       mesh.castShadow = true;
       world.arenaGroup.add(mesh);
       world.ramps.push({ ...r, slope: r.h / r.l, dir: new THREE.Vector3(Math.sin(r.yaw || 0), 0, Math.cos(r.yaw || 0)), mesh });
     });
 
-    def.hazards?.forEach(h => {
-      const geo = new THREE.CircleGeometry(h.r, 48);
-      geo.rotateX(-Math.PI / 2);
-      const lavaTex = getLavaTexture().clone();
-      lavaTex.needsUpdate = true;
-      lavaTex.repeat.set(Math.max(1, h.r / 28), Math.max(1, h.r / 28));
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0xff6b4a,
-        emissive: 0xff3b2b,
-        emissiveIntensity: 1.05,
-        roughness: 0.55,
-        metalness: 0.05,
-        transparent: true,
-        opacity: 0.92,
-        map: lavaTex,
-        emissiveMap: lavaTex,
-        depthWrite: false,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(h.x, 0.02, h.z);
-      world.arenaGroup.add(mesh); world.hazardMeshes.push({ mesh, data: h });
-      const light = new THREE.PointLight(0xff4f36, 0.7, 220); light.position.set(h.x, 18, h.z); scene.add(light); world.hazardLights.push(light);
+    const platMat = new THREE.MeshStandardMaterial({ color: 0x21242b, roughness: 0.9, metalness: 0.05, emissive: 0x05060a, emissiveIntensity: 0.2 });
+    (def.platforms || []).forEach(p => {
+      const thickness = 1.2;
+      const geo = new THREE.BoxGeometry(p.w, thickness, p.l);
+      const mesh = new THREE.Mesh(geo, platMat);
+      mesh.rotation.y = p.yaw || 0;
+      mesh.position.set(p.x, p.y - thickness * 0.5, p.z);
+      mesh.receiveShadow = true;
+      mesh.castShadow = true;
+      world.arenaGroup.add(mesh);
     });
 
-    def.boosts?.forEach(b => {
-      const geo = new THREE.RingGeometry(b.r * 0.6, b.r, 48);
+    const ringMat = new THREE.MeshStandardMaterial({ color: 0x1c2028, roughness: 0.92, metalness: 0.04, emissive: 0x05060a, emissiveIntensity: 0.22, side: THREE.DoubleSide });
+    (def.rings || []).forEach(r => {
+      const geo = new THREE.RingGeometry(r.inner, r.outer, 90);
       geo.rotateX(-Math.PI / 2);
-      const mat = new THREE.MeshStandardMaterial({ color: 0xffd15a, emissive: 0xff9f40, emissiveIntensity: 0.95, roughness: 0.35, metalness: 0.15, transparent: true, opacity: 0.95, depthWrite: false });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(b.x, 0.03, b.z);
-      world.arenaGroup.add(mesh); world.boostMeshes.push({ mesh, data: b });
+      const mesh = new THREE.Mesh(geo, ringMat);
+      mesh.position.set(r.x, r.y, r.z);
+      mesh.receiveShadow = true;
+      world.arenaGroup.add(mesh);
     });
+
+    // Remove circle decals on the floor (hazards/boost rings are not rendered).
 
     const propGeo = new THREE.ConeGeometry(2, 9, 6);
     const propMat = new THREE.MeshStandardMaterial({ color: 0x7cf0d8, emissive: 0x1f3a32, roughness: 0.55, metalness: 0.12 });
@@ -1006,8 +1091,8 @@ BASELINE AUDIT (before fixes):
     const leftDown = keys[left] || touch.left;
     const rightDown = keys[right] || touch.right;
     return {
-      // Steer axis: left is positive, right is negative; yaw application below converts to screen-correct turn.
-      steer: (leftDown ? 1 : 0) - (rightDown ? 1 : 0),
+      // Steer axis: left is negative, right is positive (so the yawVel formula below can be positive).
+      steer: (rightDown ? 1 : 0) - (leftDown ? 1 : 0),
       left: leftDown,
       right: rightDown,
       accel: keys[up] || touch.accel || false,
@@ -1053,8 +1138,7 @@ BASELINE AUDIT (before fixes):
 
     const steerGrip = (input.drift ? CFG.driftGrip : CFG.lateralGrip) * game.mod.grip;
     const steerRate = (input.drift ? CFG.steerDrift : CFG.steer) * game.mod.steer * (0.55 + (1 - speed01) * 0.6);
-    // Negative here makes ArrowLeft/WASD-left turn left on screen (chase camera).
-    game.yawVel = lerp(game.yawVel, (-steerInput) * steerRate, dt * (input.drift ? 6 : 8));
+    game.yawVel = lerp(game.yawVel, (steerInput) * steerRate, dt * (input.drift ? 6 : 8));
     game.yaw += game.yawVel * dt;
 
     const fSpeed = game.vel.dot(forward);
@@ -1118,22 +1202,31 @@ BASELINE AUDIT (before fixes):
     game.invuln = Math.max(0, game.invuln - dt);
     game.shake = Math.max(0, game.shake - dt * 1.6);
 
-    // Vertical (ramps + jumps)
+    // Vertical (ramps + jumps + platforms)
     const g = sampleGround(game.map, game.pos.x, game.pos.z);
-    if (g.ramp) {
-      game.onRamp = true;
-      game.grounded = true;
-      game.pos.y = g.y;
+    const targetY = g.y;
+    const snapEps = 0.65;
+    if (game.pos.y <= targetY + snapEps && game.vel.y <= 0) {
+      game.pos.y = targetY;
       game.vel.y = 0;
-      const along = game.vel.dot(g.ramp.dir);
-      game.rampTakeoff = Math.max(game.rampTakeoff, Math.max(0, along) * g.ramp.slope * CFG.rampLaunchScale);
+      game.grounded = true;
+      if (g.ramp) {
+        game.onRamp = true;
+        const along = game.vel.dot(g.ramp.dir);
+        game.rampTakeoff = Math.max(game.rampTakeoff, Math.max(0, along) * g.ramp.slope * CFG.rampLaunchScale);
+      } else {
+        if (game.onRamp && game.rampTakeoff > 0.1) game.vel.y = Math.max(game.vel.y, game.rampTakeoff);
+        game.onRamp = false;
+        game.rampTakeoff = 0;
+      }
     } else {
-      if (game.onRamp && game.rampTakeoff > 0) game.vel.y = Math.max(game.vel.y, game.rampTakeoff);
+      if (game.onRamp && game.rampTakeoff > 0.1) game.vel.y = Math.max(game.vel.y, game.rampTakeoff);
       game.onRamp = false;
       game.rampTakeoff = 0;
+      game.grounded = false;
       game.vel.y -= CFG.gravity * dt;
       game.pos.y += game.vel.y * dt;
-      if (game.pos.y <= 0) { game.pos.y = 0; game.vel.y = 0; game.grounded = true; } else game.grounded = false;
+      if (game.pos.y <= 0) { game.pos.y = 0; game.vel.y = 0; game.grounded = true; }
     }
 
     updatePickups(dt);
@@ -1221,6 +1314,32 @@ BASELINE AUDIT (before fixes):
       if (y > bestY) {
         bestY = y;
         bestRamp = { slope: r.h / r.l, dir: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)) };
+      }
+    }
+
+    const platforms = map?.platforms || [];
+    for (let i = 0; i < platforms.length; i++) {
+      const p = platforms[i];
+      const yaw = p.yaw || 0;
+      const cos = Math.cos(-yaw);
+      const sin = Math.sin(-yaw);
+      const dx = x - p.x;
+      const dz = z - p.z;
+      const lx = dx * cos - dz * sin;
+      const lz = dx * sin + dz * cos;
+      if (Math.abs(lx) <= p.w * 0.5 && Math.abs(lz) <= p.l * 0.5) {
+        if (p.y > bestY) bestY = p.y;
+      }
+    }
+
+    const rings = map?.rings || [];
+    for (let i = 0; i < rings.length; i++) {
+      const r = rings[i];
+      const dx = x - r.x;
+      const dz = z - r.z;
+      const d = Math.hypot(dx, dz);
+      if (d >= r.inner && d <= r.outer) {
+        if (r.y > bestY) bestY = r.y;
       }
     }
     return { y: bestY, ramp: bestRamp };
@@ -1505,10 +1624,7 @@ BASELINE AUDIT (before fixes):
     ctx.beginPath();
     ctx.arc(0, 0, def.size * scale, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.fillStyle = 'rgba(255,95,122,0.5)';
-    def.hazards?.forEach(hz => { ctx.beginPath(); ctx.arc(hz.x * scale, hz.z * scale, hz.r * scale, 0, Math.PI * 2); ctx.fill(); });
-    ctx.fillStyle = 'rgba(255,209,90,0.5)';
-    def.boosts?.forEach(b => { ctx.beginPath(); ctx.arc(b.x * scale, b.z * scale, b.r * scale, 0, Math.PI * 2); ctx.fill(); });
+    // Keep preview simple (no circle decals).
     ctx.restore();
   }
 
