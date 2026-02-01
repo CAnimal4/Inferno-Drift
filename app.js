@@ -14,9 +14,11 @@ BASELINE AUDIT (before fixes):
 */
 /* CURRENT AUDIT:
 - Speed: update() integrates game.vel with (CFG.accel/brake) and drag; no hard cap (CFG.maxSpeed is only a very high soft reference).
-- Steering: readInput() returns steer axis where left is positive and right is negative; update() applies steer -> yawVel -> yaw; forward = (sin(yaw), 0, cos(yaw)).
+- Steering: readInput() returns steer axis where left is negative and right is positive; update() applies steer -> yawVel -> yaw; forward = (sin(yaw), 0, cos(yaw)).
 - HUD: updateHUD() updates DOM (#hud*). Blur was caused by HUD being behind the topbar backdrop-filter due to stacking context; fixed in CSS (see style.css).
 */
+
+import * as THREE from './vendor/three.module.js';
 
 (() => {
   'use strict';
@@ -25,8 +27,41 @@ BASELINE AUDIT (before fixes):
   const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
   const lerp = (a, b, t) => a + (b - a) * clamp(t, 0, 1);
   const pick = arr => arr[Math.floor(Math.random() * arr.length)] || arr[0];
+  const smoothstep = (e0, e1, x) => {
+    const t = clamp((x - e0) / (e1 - e0), 0, 1);
+    return t * t * (3 - 2 * t);
+  };
+
+  // Lightweight deterministic 2D noise (value noise + fbm)
+  const fract = v => v - Math.floor(v);
+  const hash2 = (x, z) => fract(Math.sin(x * 127.1 + z * 311.7) * 43758.5453123);
+  function noise2(x, z) {
+    const ix = Math.floor(x);
+    const iz = Math.floor(z);
+    const fx = x - ix;
+    const fz = z - iz;
+    const u = fx * fx * (3 - 2 * fx);
+    const v = fz * fz * (3 - 2 * fz);
+    const a = hash2(ix, iz);
+    const b = hash2(ix + 1, iz);
+    const c = hash2(ix, iz + 1);
+    const d = hash2(ix + 1, iz + 1);
+    return lerp(lerp(a, b, u), lerp(c, d, u), v);
+  }
+  function fbm2(x, z) {
+    let sum = 0;
+    let amp = 0.55;
+    let freq = 1;
+    for (let i = 0; i < 4; i++) {
+      sum += amp * noise2(x * freq, z * freq);
+      freq *= 2;
+      amp *= 0.5;
+    }
+    return sum;
+  }
 
   const ASSETS = { groundTex: null, skyTex: null, lavaTex: null, particleTex: null };
+  const UP = new THREE.Vector3(0, 1, 0);
 
   /* Config */
   const CFG = {
@@ -55,7 +90,10 @@ BASELINE AUDIT (before fixes):
     arenaBounce: 0.45,
     dprCap: 2,
     gravity: 26,
-    rampLaunchScale: 0.9,
+    groundContactEps: 0.12,
+    groundStickVel: 1.0,
+    airSteerMul: 0.35,
+    airGripMul: 0.25,
     steerRefSpeed: 140,
     fxRefSpeed: 170,
     cameraLag: 0.12,
@@ -68,126 +106,64 @@ BASELINE AUDIT (before fixes):
     rivalMaxFactor: 0.92,
   };
 
-  /* Maps (arenas) */
-  const MAPS = [
-    {
-      id: 'crater',
-      name: 'Ember Crater',
-      desc: 'Compact bowl with central lava and outer boost rings.',
-      difficulty: 'Easy',
-      size: 420,
-      hazards: [{ x: 0, z: 0, r: 90 }, { x: -160, z: 130, r: 60 }],
-      boosts: [{ x: 160, z: -140, r: 60 }, { x: -200, z: -120, r: 50 }],
-      ramps: [
-        { x: 120, z: 40, w: 18, l: 42, h: 7, yaw: 0.4 },
-        { x: -220, z: -40, w: 16, l: 36, h: 6, yaw: -0.9 },
-        { x: 0, z: -260, w: 24, l: 70, h: 10, yaw: 0.0 },
-        { x: 260, z: 0, w: 20, l: 58, h: 9, yaw: 1.57 },
-        { x: -260, z: 0, w: 20, l: 58, h: 9, yaw: -1.57 },
-        { x: 0, z: 260, w: 22, l: 64, h: 9, yaw: 3.14 },
-      ],
-      platforms: [
-        { x: 0, z: -340, w: 120, l: 90, y: 10, yaw: 0.0 },
-        { x: 340, z: 0, w: 90, l: 120, y: 10, yaw: 1.57 },
-      ],
-      rings: [
-        { x: 0, z: 0, inner: 70, outer: 100, y: 6 },
-      ],
-    },
-    {
-      id: 'ridge',
-      name: 'Ridge Flats',
-      desc: 'Long sightlines, staggered lava pools, chase-friendly.',
-      difficulty: 'Medium',
-      size: 520,
-      hazards: [{ x: -120, z: 40, r: 70 }, { x: 140, z: 160, r: 80 }, { x: 60, z: -200, r: 60 }],
-      boosts: [{ x: -220, z: -180, r: 60 }, { x: 230, z: 60, r: 60 }],
-      ramps: [
-        { x: 0, z: -260, w: 22, l: 56, h: 9, yaw: 0.0 },
-        { x: 260, z: -40, w: 18, l: 44, h: 7, yaw: 1.4 },
-        { x: -260, z: 160, w: 20, l: 52, h: 8, yaw: -2.0 },
-      ],
-      platforms: [
-        { x: -360, z: 140, w: 110, l: 70, y: 9, yaw: -0.3 },
-      ],
-      rings: [
-        { x: 160, z: 220, inner: 55, outer: 78, y: 7 },
-      ],
-    },
-    {
-      id: 'switch',
-      name: 'Switchyard',
-      desc: 'Narrow corridors cut by lava grates and boost lanes.',
-      difficulty: 'Hard',
-      size: 360,
-      hazards: [{ x: -60, z: 0, r: 60 }, { x: 80, z: -100, r: 70 }, { x: 90, z: 120, r: 60 }],
-      boosts: [{ x: -180, z: -140, r: 50 }, { x: 190, z: 100, r: 40 }],
-      ramps: [
-        { x: -10, z: 160, w: 16, l: 38, h: 6, yaw: Math.PI },
-        { x: 160, z: -10, w: 16, l: 40, h: 7, yaw: Math.PI / 2 },
-        { x: -160, z: 10, w: 16, l: 40, h: 7, yaw: -Math.PI / 2 },
-      ],
-      platforms: [
-        { x: 0, z: 0, w: 120, l: 120, y: 6, yaw: 0 },
-      ],
-    },
-    {
-      id: 'dunes',
-      name: 'Shifting Dunes',
-      desc: 'Wide-open drift pad with scattered lava pockets.',
-      difficulty: 'Medium',
-      size: 640,
-      hazards: [{ x: -200, z: 80, r: 80 }, { x: 220, z: -120, r: 90 }, { x: 0, z: 220, r: 100 }],
-      boosts: [{ x: -280, z: -260, r: 80 }, { x: 280, z: 260, r: 80 }],
-      ramps: [
-        { x: -160, z: 320, w: 26, l: 70, h: 11, yaw: 0.2 },
-        { x: 220, z: 80, w: 20, l: 52, h: 8, yaw: -1.2 },
-        { x: 0, z: -420, w: 28, l: 82, h: 13, yaw: 0 },
-      ],
-      rings: [
-        { x: -240, z: -120, inner: 75, outer: 102, y: 8 },
-      ],
-    },
-    {
-      id: 'spire',
-      name: 'Spire Garden',
-      desc: 'Clustered pillars, tight turns, lots of cover.',
-      difficulty: 'Technical',
-      size: 420,
-      hazards: [{ x: -140, z: -40, r: 70 }, { x: 60, z: 140, r: 70 }],
-      boosts: [{ x: 160, z: -160, r: 60 }, { x: -200, z: 140, r: 50 }],
-      ramps: [
-        { x: 210, z: -10, w: 16, l: 40, h: 7, yaw: 1.55 },
-        { x: -210, z: 20, w: 18, l: 50, h: 9, yaw: -1.55 },
-      ],
-      platforms: [
-        { x: 0, z: 260, w: 160, l: 90, y: 10, yaw: 0.25 },
-      ],
-    },
-    {
-      id: 'endless',
-      name: 'Endless Yard',
-      desc: 'Large playground for endless chase and score farming.',
-      difficulty: 'Endless',
-      size: 760,
-      hazards: [{ x: 0, z: 0, r: 120 }, { x: 260, z: -200, r: 120 }, { x: -260, z: 200, r: 120 }],
-      boosts: [{ x: -360, z: -260, r: 90 }, { x: 360, z: 260, r: 90 }],
-      ramps: [
-        { x: 0, z: -420, w: 28, l: 84, h: 14, yaw: 0 },
-        { x: 420, z: 0, w: 24, l: 72, h: 12, yaw: Math.PI / 2 },
-        { x: -380, z: -60, w: 22, l: 64, h: 10, yaw: -0.8 },
-        { x: 0, z: 520, w: 30, l: 92, h: 16, yaw: Math.PI },
-        { x: -520, z: 0, w: 26, l: 80, h: 14, yaw: -Math.PI / 2 },
-      ],
-      platforms: [
-        { x: 0, z: -560, w: 200, l: 110, y: 12, yaw: 0 },
-        { x: 560, z: 0, w: 120, l: 200, y: 12, yaw: Math.PI / 2 },
-      ],
-      rings: [
-        { x: 0, z: 0, inner: 110, outer: 155, y: 9 },
-      ],
-    },
-  ];
+  /* Map (single open-world biome park) */
+  const MAPS = [{
+    id: 'megapark',
+    name: 'Inferno Wilds',
+    desc: 'One huge open world with biomes + a big stunt park.',
+    difficulty: 'Open World',
+    size: 3200,
+    ramps: [
+      // Central stunt park (connected, no single lonely ramp)
+      { x: 0, z: -240, w: 34, l: 120, h: 22, yaw: 0.0 },
+      { x: 180, z: -60, w: 26, l: 90, h: 16, yaw: 1.15 },
+      { x: -180, z: -60, w: 26, l: 90, h: 16, yaw: -1.15 },
+      { x: 0, z: 220, w: 38, l: 140, h: 24, yaw: Math.PI },
+      { x: 340, z: 0, w: 28, l: 100, h: 18, yaw: Math.PI / 2 },
+      { x: -340, z: 0, w: 28, l: 100, h: 18, yaw: -Math.PI / 2 },
+
+      // Biome connectors: smaller kickers sprinkled around
+      { x: 900, z: 400, w: 28, l: 90, h: 14, yaw: 0.6 },
+      { x: 1200, z: -700, w: 30, l: 110, h: 18, yaw: -0.25 },
+      { x: -1100, z: 800, w: 30, l: 110, h: 18, yaw: 2.4 },
+      { x: -1400, z: -900, w: 34, l: 130, h: 22, yaw: -2.5 },
+
+      // Stunt highway: long runs with real launches and safe landings
+      { x: 0, z: -1280, w: 52, l: 190, h: 34, yaw: 0.0 },
+      { x: 220, z: -1040, w: 34, l: 130, h: 22, yaw: 0.75 },
+      { x: -240, z: -1020, w: 34, l: 130, h: 22, yaw: -0.75 },
+      { x: 0, z: -760, w: 44, l: 170, h: 26, yaw: Math.PI },
+
+      // Outer-world mega kickers
+      { x: 1900, z: 900, w: 46, l: 180, h: 28, yaw: 0.55 },
+      { x: -2100, z: 1100, w: 46, l: 180, h: 28, yaw: 2.3 },
+      { x: 2100, z: -1300, w: 50, l: 210, h: 34, yaw: -0.4 },
+      { x: -2300, z: -1500, w: 54, l: 220, h: 36, yaw: -2.4 },
+    ],
+    platforms: [
+      // Multi-level plazas to jump onto/from
+      { x: 0, z: -520, w: 420, l: 220, y: 16, yaw: 0 },
+      { x: 520, z: 0, w: 220, l: 420, y: 16, yaw: Math.PI / 2 },
+      { x: -520, z: 0, w: 220, l: 420, y: 16, yaw: Math.PI / 2 },
+      { x: 0, z: 520, w: 420, l: 220, y: 16, yaw: 0 },
+      { x: 0, z: 0, w: 220, l: 220, y: 10, yaw: 0 },
+      { x: 0, z: -860, w: 220, l: 140, y: 26, yaw: 0 },
+
+      // Highway landings (flat + wide so jumps feel fair)
+      { x: 0, z: -1040, w: 520, l: 260, y: 30, yaw: 0 },
+      { x: 0, z: -1420, w: 420, l: 220, y: 40, yaw: 0 },
+      { x: 1800, z: 840, w: 380, l: 220, y: 24, yaw: 0.5 },
+      { x: -2000, z: 1040, w: 380, l: 220, y: 24, yaw: -0.7 },
+    ],
+    rings: [
+      // Elevated ring road for high-speed sweeping turns
+      { x: 0, z: 0, inner: 140, outer: 210, y: 12 },
+      { x: 900, z: -300, inner: 120, outer: 170, y: 10 },
+      { x: -1050, z: 650, inner: 150, outer: 220, y: 12 },
+      { x: 1550, z: 1050, inner: 170, outer: 260, y: 14 },
+      { x: -1850, z: -1350, inner: 190, outer: 290, y: 16 },
+    ],
+  }];
 
   /* Perks */
   const PERKS = [
@@ -211,6 +187,7 @@ BASELINE AUDIT (before fixes):
     particles: null,
     ramps: [],
     floor: null,
+    stunts: { ramps: [], platforms: [], rings: [] },
   };
   let renderer, scene, camera;
   let playerMesh, playerShadow;
@@ -264,8 +241,10 @@ BASELINE AUDIT (before fixes):
     shake: 0,
     invuln: 0,
     grounded: true,
+    groundY: 0,
+    groundNormal: new THREE.Vector3(0, 1, 0),
     onRamp: false,
-    rampTakeoff: 0,
+    rampId: -1,
   };
 
   /* Boot */
@@ -276,7 +255,6 @@ BASELINE AUDIT (before fixes):
   function boot() {
     cacheDom();
     buildDebugBox();
-    if (!window.THREE) throw new Error('Three.js not found (vendor/three.min.js)');
     initRenderer();
     initScene();
     initPools();
@@ -511,6 +489,78 @@ BASELINE AUDIT (before fixes):
     return tex;
   }
 
+  function biomeColorAt(map, x, z) {
+    const s = Math.max(1, map.size);
+    const nx = clamp(x / s, -1, 1);
+    const nz = clamp(z / s, -1, 1);
+    const n = fbm2((x + 5000) * 0.00055, (z - 2000) * 0.00055);
+    const warp = (n - 0.5) * 0.45;
+
+    const tE = smoothstep(-0.25, 0.75, nx + warp);
+    const tN = smoothstep(-0.25, 0.75, nz - warp);
+
+    let wAsh = tN * (1 - tE);
+    let wCrystal = tN * tE;
+    let wDunes = (1 - tN) * tE;
+    let wBasalt = (1 - tN) * (1 - tE);
+
+    const dist = Math.hypot(x, z);
+    const wPark = smoothstep(520, 0, dist); // strongest at center
+    wAsh *= (1 - wPark);
+    wCrystal *= (1 - wPark);
+    wDunes *= (1 - wPark);
+    wBasalt *= (1 - wPark);
+
+    const sum = Math.max(1e-6, wAsh + wCrystal + wDunes + wBasalt);
+    wAsh /= sum; wCrystal /= sum; wDunes /= sum; wBasalt /= sum;
+
+    // Biome palette (RGB in 0..1)
+    const ash = [0.62, 0.60, 0.58];
+    const crystal = [0.40, 0.70, 0.85];
+    const dunes = [0.78, 0.60, 0.38];
+    const basalt = [0.22, 0.26, 0.33];
+    const park = [0.55, 0.55, 0.55];
+
+    let r = ash[0] * wAsh + crystal[0] * wCrystal + dunes[0] * wDunes + basalt[0] * wBasalt;
+    let g = ash[1] * wAsh + crystal[1] * wCrystal + dunes[1] * wDunes + basalt[1] * wBasalt;
+    let b = ash[2] * wAsh + crystal[2] * wCrystal + dunes[2] * wDunes + basalt[2] * wBasalt;
+
+    r = lerp(r, park[0], wPark);
+    g = lerp(g, park[1], wPark);
+    b = lerp(b, park[2], wPark);
+
+    const grit = (fbm2((x - 1200) * 0.0022, (z + 700) * 0.0022) - 0.5) * 0.08;
+    r = clamp(r + grit, 0, 1);
+    g = clamp(g + grit, 0, 1);
+    b = clamp(b + grit, 0, 1);
+    return [r, g, b];
+  }
+
+  function baseHeightAt(map, x, z) {
+    const s = Math.max(1, map.size);
+    const nx = x / s;
+    const nz = z / s;
+    const n0 = fbm2((x + 1000) * 0.00075, (z - 1000) * 0.00075);
+    const n1 = fbm2((x - 3400) * 0.0016, (z + 2100) * 0.0016);
+    let h = (n0 - 0.5) * 6.0 + (n1 - 0.5) * 1.2;
+
+    // Dunes (SE quadrant)
+    const duneW = smoothstep(-0.05, 0.55, nx) * smoothstep(-0.65, -0.05, nz);
+    const dune = (Math.sin((x + 80) * 0.012) + Math.cos((z - 60) * 0.011)) * 1.3 + Math.sin((x + z) * 0.008) * 0.9;
+    h += duneW * dune;
+
+    // Crystals (NE quadrant) - gentle plateaus
+    const cryW = smoothstep(-0.05, 0.55, nx) * smoothstep(-0.05, 0.65, nz);
+    h += cryW * (smoothstep(0.45, 0.8, n0) * 1.8);
+
+    // Park region flatter
+    const dist = Math.hypot(x, z);
+    const parkW = smoothstep(900, 260, dist);
+    h = lerp(h, (n0 - 0.5) * 1.1, parkW);
+
+    return h;
+  }
+
   function addSkyDome() {
     if (ASSETS.skyTex) return;
     const c = document.createElement('canvas');
@@ -535,7 +585,7 @@ BASELINE AUDIT (before fixes):
     tex.encoding = THREE.sRGBEncoding;
     ASSETS.skyTex = tex;
     const sky = new THREE.Mesh(
-      new THREE.SphereGeometry(1800, 32, 16),
+      new THREE.SphereGeometry(4200, 32, 16),
       new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide })
     );
     scene.add(sky);
@@ -696,16 +746,16 @@ BASELINE AUDIT (before fixes):
   function initScene() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x04070f);
-    scene.fog = new THREE.Fog(0x04070f, 50, 1200);
+    scene.fog = new THREE.Fog(0x04070f, 80, 2600);
     const hemi = new THREE.HemisphereLight(0x7fb9ff, 0x0a0c16, 0.9);
     const sun = new THREE.DirectionalLight(0xfff1d0, 0.9);
     sun.position.set(160, 260, -160);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -240;
-    sun.shadow.camera.right = 240;
-    sun.shadow.camera.top = 240;
-    sun.shadow.camera.bottom = -240;
+    sun.shadow.camera.left = -520;
+    sun.shadow.camera.right = 520;
+    sun.shadow.camera.top = 520;
+    sun.shadow.camera.bottom = -520;
     scene.add(hemi, sun);
 
     world.arenaGroup = new THREE.Group();
@@ -904,8 +954,10 @@ BASELINE AUDIT (before fixes):
     game.shake = 0; game.lastDt = 0; game.steerInput = 0;
     game.invuln = 0;
     game.grounded = true;
+    game.groundY = 0;
+    game.groundNormal.set(0, 1, 0);
     game.onRamp = false;
-    game.rampTakeoff = 0;
+    game.rampId = -1;
     game.mod = defaultMods();
     if (game.perk) applyPerk(game.perk);
     buildArena(game.map);
@@ -928,9 +980,16 @@ BASELINE AUDIT (before fixes):
     world.hazardMeshes = []; world.boostMeshes = [];
     world.hazardLights?.forEach(l => scene.remove(l)); world.hazardLights = [];
 
-    // Entire floor = lava circles (per request).
-    const groundMat = new THREE.MeshStandardMaterial({ color: 0x24060c, roughness: 0.78, metalness: 0.0, emissive: 0x180208, emissiveIntensity: 0.7 });
-    const gRepeat = def.size / 85;
+    // Biome terrain (heightfield + vertex-color tint).
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.92,
+      metalness: 0.02,
+      emissive: 0x180208,
+      emissiveIntensity: 0.28,
+      vertexColors: true,
+    });
+    const gRepeat = def.size / 130;
     const lavaTex = getLavaTexture();
     const floorTex = lavaTex.clone();
     floorTex.needsUpdate = true;
@@ -941,9 +1000,78 @@ BASELINE AUDIT (before fixes):
     groundMat.map = floorTex;
     groundMat.emissiveMap = floorEm;
     world.floor = { map: floorTex, emissiveMap: floorEm };
-    const groundSize = def.size * 3.0;
-    const groundGeo = new THREE.PlaneGeometry(groundSize, groundSize, 1, 1);
+
+    const groundSize = def.size * 2.6;
+    const segs = clamp(Math.floor(def.size / 14), 140, 240);
+    const groundGeo = new THREE.PlaneGeometry(groundSize, groundSize, segs, segs);
     groundGeo.rotateX(-Math.PI / 2);
+    const posAttr = groundGeo.attributes.position;
+    const colorAttr = new Float32Array(posAttr.count * 3);
+
+    // Carve the terrain slightly under stunts so ramps/platforms don't look "buried" in noisy ground.
+    const rampCarves = (def.ramps || []).map(r => {
+      const yaw = r.yaw || 0;
+      const cos = Math.cos(-yaw);
+      const sin = Math.sin(-yaw);
+      const dirX = Math.sin(yaw);
+      const dirZ = Math.cos(yaw);
+      const lowX = r.x - dirX * (r.l * 0.5);
+      const lowZ = r.z - dirZ * (r.l * 0.5);
+      const baseY = baseHeightAt(def, lowX, lowZ);
+      return { x: r.x, z: r.z, w: r.w, l: r.l, h: r.h, cos, sin, baseY };
+    });
+    const platformThickness = 1.2;
+    const platCarves = (def.platforms || []).map(p => {
+      const yaw = p.yaw || 0;
+      const cos = Math.cos(-yaw);
+      const sin = Math.sin(-yaw);
+      const baseY = baseHeightAt(def, p.x, p.z);
+      const carveY = baseY + p.y - platformThickness - 0.35;
+      return { x: p.x, z: p.z, w: p.w, l: p.l, cos, sin, carveY };
+    });
+    const ringCarves = (def.rings || []).map(r => {
+      const baseY = baseHeightAt(def, r.x, r.z);
+      const carveY = baseY + r.y - 0.35;
+      return { x: r.x, z: r.z, inner: r.inner, outer: r.outer, carveY };
+    });
+    for (let i = 0; i < posAttr.count; i++) {
+      const x = posAttr.getX(i);
+      const z = posAttr.getZ(i);
+      let y = baseHeightAt(def, x, z);
+
+      for (let j = 0; j < rampCarves.length; j++) {
+        const r = rampCarves[j];
+        const dx = x - r.x;
+        const dz = z - r.z;
+        const lx = dx * r.cos - dz * r.sin;
+        const lz = dx * r.sin + dz * r.cos;
+        if (Math.abs(lx) > r.w * 0.6 || lz < -r.l * 0.6 || lz > r.l * 0.6) continue;
+        const t = (lz + r.l * 0.5) / r.l;
+        const ry = r.baseY + clamp(t, 0, 1) * r.h;
+        y = Math.min(y, ry - 0.45);
+      }
+      for (let j = 0; j < platCarves.length; j++) {
+        const p = platCarves[j];
+        const dx = x - p.x;
+        const dz = z - p.z;
+        const lx = dx * p.cos - dz * p.sin;
+        const lz = dx * p.sin + dz * p.cos;
+        if (Math.abs(lx) <= p.w * 0.55 && Math.abs(lz) <= p.l * 0.55) y = Math.min(y, p.carveY);
+      }
+      for (let j = 0; j < ringCarves.length; j++) {
+        const r = ringCarves[j];
+        const d = Math.hypot(x - r.x, z - r.z);
+        if (d >= r.inner && d <= r.outer) y = Math.min(y, r.carveY);
+      }
+      posAttr.setY(i, y);
+      const [r, g, b] = biomeColorAt(def, x, z);
+      colorAttr[i * 3] = r;
+      colorAttr[i * 3 + 1] = g;
+      colorAttr[i * 3 + 2] = b;
+    }
+    groundGeo.setAttribute('color', new THREE.BufferAttribute(colorAttr, 3));
+    groundGeo.computeVertexNormals();
+
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.receiveShadow = true;
     world.arenaGroup.add(ground);
@@ -986,28 +1114,37 @@ BASELINE AUDIT (before fixes):
 
     // Ramps (jumps) + platforms/rings (stunt park)
     world.ramps = [];
+    world.stunts = { ramps: [], platforms: [], rings: [] };
     const rampMat = new THREE.MeshStandardMaterial({ color: 0x2a2b2f, roughness: 0.82, metalness: 0.06, emissive: 0x080a0f, emissiveIntensity: 0.35 });
     (def.ramps || []).forEach(r => {
+      const yaw = r.yaw || 0;
+      const dir = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+      const lowX = r.x - dir.x * (r.l * 0.5);
+      const lowZ = r.z - dir.z * (r.l * 0.5);
+      const baseY = baseHeightAt(def, lowX, lowZ);
       const geo = makeWedgeGeometry(r.w, r.l, r.h);
       const mesh = new THREE.Mesh(geo, rampMat);
-      mesh.rotation.y = r.yaw || 0;
-      mesh.position.set(r.x, r.h * 0.25, r.z);
+      mesh.rotation.y = yaw;
+      mesh.position.set(r.x, baseY, r.z);
       mesh.receiveShadow = true;
       mesh.castShadow = true;
       world.arenaGroup.add(mesh);
-      world.ramps.push({ ...r, slope: r.h / r.l, dir: new THREE.Vector3(Math.sin(r.yaw || 0), 0, Math.cos(r.yaw || 0)), mesh });
+      const rr = { ...r, id: world.ramps.length, yaw, baseY, slope: r.h / r.l, dir, mesh };
+      world.ramps.push(rr);
+      world.stunts.ramps.push(rr);
     });
 
     const platMat = new THREE.MeshStandardMaterial({ color: 0x21242b, roughness: 0.9, metalness: 0.05, emissive: 0x05060a, emissiveIntensity: 0.2 });
     (def.platforms || []).forEach(p => {
-      const thickness = 1.2;
-      const geo = new THREE.BoxGeometry(p.w, thickness, p.l);
+      const baseY = baseHeightAt(def, p.x, p.z);
+      const geo = new THREE.BoxGeometry(p.w, platformThickness, p.l);
       const mesh = new THREE.Mesh(geo, platMat);
       mesh.rotation.y = p.yaw || 0;
-      mesh.position.set(p.x, p.y - thickness * 0.5, p.z);
+      mesh.position.set(p.x, baseY + p.y - platformThickness * 0.5, p.z);
       mesh.receiveShadow = true;
       mesh.castShadow = true;
       world.arenaGroup.add(mesh);
+      world.stunts.platforms.push({ ...p, baseY });
     });
 
     const ringMat = new THREE.MeshStandardMaterial({ color: 0x1c2028, roughness: 0.92, metalness: 0.04, emissive: 0x05060a, emissiveIntensity: 0.22, side: THREE.DoubleSide });
@@ -1015,9 +1152,11 @@ BASELINE AUDIT (before fixes):
       const geo = new THREE.RingGeometry(r.inner, r.outer, 90);
       geo.rotateX(-Math.PI / 2);
       const mesh = new THREE.Mesh(geo, ringMat);
-      mesh.position.set(r.x, r.y, r.z);
+      const baseY = baseHeightAt(def, r.x, r.z);
+      mesh.position.set(r.x, baseY + r.y, r.z);
       mesh.receiveShadow = true;
       world.arenaGroup.add(mesh);
+      world.stunts.rings.push({ ...r, baseY });
     });
 
     // Remove circle decals on the floor (hazards/boost rings are not rendered).
@@ -1122,43 +1261,52 @@ BASELINE AUDIT (before fixes):
     game.lastDt = dt;
     game.fps = game.fps ? lerp(game.fps, 1 / dt, 0.08) : 1 / dt;
 
-    const forward = new THREE.Vector3(Math.sin(game.yaw), 0, Math.cos(game.yaw));
-    const right = new THREE.Vector3(forward.z, 0, -forward.x);
-
     const speedScale = Number(game.settings.speedScale || 1);
-    const speed01 = clamp(game.speed / Math.max(1, CFG.steerRefSpeed * speedScale), 0, 1);
+    const speedXZ = Math.hypot(game.vel.x, game.vel.z);
+    const speed01 = clamp(speedXZ / Math.max(1, CFG.steerRefSpeed * speedScale), 0, 1);
 
     const steerInput = input.steer;
     game.steerInput = steerInput;
-    const accel01 = clamp(game.speed / Math.max(1, CFG.fxRefSpeed * 2.5 * speedScale), 0, 1);
+    const accel01 = clamp(speedXZ / Math.max(1, CFG.fxRefSpeed * 2.5 * speedScale), 0, 1);
     const throttleCurve = 1 - Math.pow(accel01, CFG.throttleCurve);
     const effAccel = CFG.accel * throttleCurve;
-    if (input.accel) game.vel.addScaledVector(forward, effAccel * dt);
-    if (input.brake) game.vel.addScaledVector(forward, -CFG.brake * dt);
 
-    const steerGrip = (input.drift ? CFG.driftGrip : CFG.lateralGrip) * game.mod.grip;
-    const steerRate = (input.drift ? CFG.steerDrift : CFG.steer) * game.mod.steer * (0.55 + (1 - speed01) * 0.6);
+    const groundedSteerMul = game.grounded ? 1 : CFG.airSteerMul;
+    const groundedGripMul = game.grounded ? 1 : CFG.airGripMul;
+    const steerGrip = (input.drift ? CFG.driftGrip : CFG.lateralGrip) * game.mod.grip * groundedGripMul;
+    const steerRate = (input.drift ? CFG.steerDrift : CFG.steer) * game.mod.steer * groundedSteerMul * (0.55 + (1 - speed01) * 0.6);
     game.yawVel = lerp(game.yawVel, (steerInput) * steerRate, dt * (input.drift ? 6 : 8));
     game.yaw += game.yawVel * dt;
+
+    // Ground-aligned basis: climbing ramps feels natural and launches happen at edges (no "snap to top").
+    const groundN = game.grounded ? game.groundNormal : UP;
+    const forward = new THREE.Vector3(Math.sin(game.yaw), 0, Math.cos(game.yaw));
+    if (game.grounded) {
+      forward.addScaledVector(groundN, -forward.dot(groundN));
+      if (forward.lengthSq() < 1e-6) forward.set(Math.sin(game.yaw), 0, Math.cos(game.yaw));
+      forward.normalize();
+    }
+    const right = new THREE.Vector3().crossVectors(groundN, forward).normalize();
+
+    if (input.accel) game.vel.addScaledVector(forward, effAccel * dt);
+    if (input.brake) game.vel.addScaledVector(forward, -CFG.brake * dt);
 
     const fSpeed = game.vel.dot(forward);
     let side = game.vel.dot(right);
     side = lerp(side, 0, dt * steerGrip);
-    const vy = game.vel.y;
-    game.vel.copy(forward.clone().multiplyScalar(fSpeed)).add(right.clone().multiplyScalar(side));
-    game.vel.y = vy;
+    const nSpeed = game.vel.dot(groundN);
+    game.vel.copy(forward.clone().multiplyScalar(fSpeed)).add(right.clone().multiplyScalar(side)).addScaledVector(groundN, nSpeed);
 
     const baseDrag = CFG.drag + (input.accel ? 0 : CFG.coastDrag);
     const dragMul = Math.max(0, 1 - baseDrag * dt);
     game.vel.x *= dragMul;
     game.vel.z *= dragMul;
-    game.speed = Math.hypot(game.vel.x, game.vel.z);
-    const speedNormNow = clamp(game.speed / Math.max(1, CFG.fxRefSpeed * speedScale), 0, 1);
-    const scoreMult = 1;
 
-    if (input.drift) {
+    const scoreMult = 1;
+    if (input.drift && game.grounded) {
       game.drift = clamp(game.drift + CFG.driftGain * dt, 0, 100);
-      game.speed *= 0.995;
+      game.vel.x *= 0.995;
+      game.vel.z *= 0.995;
       game.drifting = true;
       if (game.drift > 25) { addCombo(0.05 * dt); game.score += 3 * dt * scoreMult; }
     } else if (game.drifting) {
@@ -1185,10 +1333,48 @@ BASELINE AUDIT (before fixes):
     }
     if (game.boostPulse > 0) { game.vel.addScaledVector(forward, CFG.boostImpulse * dt); game.boostPulse -= dt; game.shake = Math.max(game.shake, 0.25); }
 
-    // Horizontal motion
-    game.pos.x += game.vel.x * dt;
-    game.pos.z += game.vel.z * dt;
+    // Integrate motion (full 3D), then resolve contact against the height-function (terrain + stunts).
+    game.vel.y -= CFG.gravity * dt;
+    game.pos.addScaledVector(game.vel, dt);
     clampToArena(game.map, game.pos, game.vel);
+
+    const allowMidRampId = game.onRamp ? game.rampId : -1;
+    const g = sampleGround(game.pos.x, game.pos.z, allowMidRampId);
+    game.groundY = g.y;
+    const dist = game.pos.y - game.groundY;
+    if (dist <= CFG.groundContactEps) {
+      const n = getGroundNormal(game.pos.x, game.pos.z, allowMidRampId);
+      const vnn = game.vel.dot(n);
+      if (dist < 0 || vnn <= CFG.groundStickVel) {
+        game.pos.y = game.groundY;
+        if (vnn < 0) {
+          const impact = -vnn;
+          if (impact > 10) {
+            game.shake = Math.max(game.shake, clamp((impact - 10) / 24, 0, 0.75));
+            if (impact > 18) playTone(180 + Math.min(220, impact * 8), 0.04, 0.08);
+          }
+          game.vel.addScaledVector(n, -vnn);
+        }
+        game.grounded = true;
+        game.groundNormal.lerp(n, 0.35);
+        game.groundNormal.normalize();
+        game.onRamp = !!g.ramp;
+        game.rampId = g.ramp ? g.ramp.id : -1;
+      } else {
+        game.grounded = false;
+        game.onRamp = false;
+        game.rampId = -1;
+        game.groundNormal.copy(UP);
+      }
+    } else {
+      game.grounded = false;
+      game.onRamp = false;
+      game.rampId = -1;
+      game.groundNormal.copy(UP);
+    }
+
+    game.speed = Math.hypot(game.vel.x, game.vel.z);
+    const speedNormNow = clamp(game.speed / Math.max(1, CFG.fxRefSpeed * speedScale), 0, 1);
 
     applyHazards(dt, game.pos);
     animateArenaFx(game.runTime);
@@ -1197,37 +1383,10 @@ BASELINE AUDIT (before fixes):
 
     game.comboTimer = Math.max(0, game.comboTimer - dt);
     if (game.comboTimer <= 0) game.combo = Math.max(1, game.combo - 0.2 * dt);
-    game.score += (game.speed * 0.06 + (input.drift ? 3 : 0)) * dt * game.combo * scoreMult;
+    game.score += (game.speed * 0.06 + ((input.drift && game.grounded) ? 3 : 0)) * dt * game.combo * scoreMult;
 
     game.invuln = Math.max(0, game.invuln - dt);
     game.shake = Math.max(0, game.shake - dt * 1.6);
-
-    // Vertical (ramps + jumps + platforms)
-    const g = sampleGround(game.map, game.pos.x, game.pos.z);
-    const targetY = g.y;
-    const snapEps = 0.65;
-    if (game.pos.y <= targetY + snapEps && game.vel.y <= 0) {
-      game.pos.y = targetY;
-      game.vel.y = 0;
-      game.grounded = true;
-      if (g.ramp) {
-        game.onRamp = true;
-        const along = game.vel.dot(g.ramp.dir);
-        game.rampTakeoff = Math.max(game.rampTakeoff, Math.max(0, along) * g.ramp.slope * CFG.rampLaunchScale);
-      } else {
-        if (game.onRamp && game.rampTakeoff > 0.1) game.vel.y = Math.max(game.vel.y, game.rampTakeoff);
-        game.onRamp = false;
-        game.rampTakeoff = 0;
-      }
-    } else {
-      if (game.onRamp && game.rampTakeoff > 0.1) game.vel.y = Math.max(game.vel.y, game.rampTakeoff);
-      game.onRamp = false;
-      game.rampTakeoff = 0;
-      game.grounded = false;
-      game.vel.y -= CFG.gravity * dt;
-      game.pos.y += game.vel.y * dt;
-      if (game.pos.y <= 0) { game.pos.y = 0; game.vel.y = 0; game.grounded = true; }
-    }
 
     updatePickups(dt);
     updateRivals(dt);
@@ -1295,10 +1454,14 @@ BASELINE AUDIT (before fixes):
 
   // Heat/boost zones are visual-only now.
 
-  function sampleGround(map, x, z) {
-    let bestY = 0;
+  function sampleGround(x, z, allowMidRampId = -1) {
+    const map = game.map;
+    if (!map) return { y: 0, ramp: null };
+
+    let bestY = baseHeightAt(map, x, z);
     let bestRamp = null;
-    const ramps = map?.ramps || [];
+
+    const ramps = world.stunts?.ramps || [];
     for (let i = 0; i < ramps.length; i++) {
       const r = ramps[i];
       const yaw = r.yaw || 0;
@@ -1309,17 +1472,21 @@ BASELINE AUDIT (before fixes):
       const lx = dx * cos - dz * sin;
       const lz = dx * sin + dz * cos;
       if (Math.abs(lx) > r.w * 0.5 || lz < -r.l * 0.5 || lz > r.l * 0.5) continue;
-      const t = (lz + r.l * 0.5) / r.l;
-      const y = clamp(t, 0, 1) * r.h;
+
+      const t = (lz + r.l * 0.5) / r.l; // 0..1 along ramp (low->high)
+      const allow = (r.id === allowMidRampId) || (t < 0.18); // prevents side "teleport to top"
+      if (!allow) continue;
+
+      const y = r.baseY + clamp(t, 0, 1) * r.h;
       if (y > bestY) {
         bestY = y;
-        bestRamp = { slope: r.h / r.l, dir: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)) };
+        bestRamp = { id: r.id };
       }
     }
 
-    const platforms = map?.platforms || [];
-    for (let i = 0; i < platforms.length; i++) {
-      const p = platforms[i];
+    const plats = world.stunts?.platforms || [];
+    for (let i = 0; i < plats.length; i++) {
+      const p = plats[i];
       const yaw = p.yaw || 0;
       const cos = Math.cos(-yaw);
       const sin = Math.sin(-yaw);
@@ -1328,21 +1495,37 @@ BASELINE AUDIT (before fixes):
       const lx = dx * cos - dz * sin;
       const lz = dx * sin + dz * cos;
       if (Math.abs(lx) <= p.w * 0.5 && Math.abs(lz) <= p.l * 0.5) {
-        if (p.y > bestY) bestY = p.y;
+        const y = p.baseY + p.y;
+        if (y > bestY) bestY = y;
       }
     }
 
-    const rings = map?.rings || [];
+    const rings = world.stunts?.rings || [];
     for (let i = 0; i < rings.length; i++) {
       const r = rings[i];
       const dx = x - r.x;
       const dz = z - r.z;
       const d = Math.hypot(dx, dz);
       if (d >= r.inner && d <= r.outer) {
-        if (r.y > bestY) bestY = r.y;
+        const y = r.baseY + r.y;
+        if (y > bestY) bestY = y;
       }
     }
+
     return { y: bestY, ramp: bestRamp };
+  }
+
+  const _tmpGroundN = new THREE.Vector3();
+  function getGroundNormal(x, z, allowMidRampId = -1) {
+    const e = 1.35;
+    const hL = sampleGround(x - e, z, allowMidRampId).y;
+    const hR = sampleGround(x + e, z, allowMidRampId).y;
+    const hD = sampleGround(x, z - e, allowMidRampId).y;
+    const hU = sampleGround(x, z + e, allowMidRampId).y;
+    _tmpGroundN.set(hL - hR, 2 * e, hD - hU);
+    if (_tmpGroundN.lengthSq() < 1e-8) _tmpGroundN.set(0, 1, 0);
+    else _tmpGroundN.normalize();
+    return _tmpGroundN;
   }
 
   function updatePlayerMesh(forward, dt) {
@@ -1358,9 +1541,9 @@ BASELINE AUDIT (before fixes):
       for (let i = 0; i < wheels.length; i++) wheels[i].rotation.x += spin;
     }
     if (playerShadow) {
-      const h = clamp(game.pos.y, 0, 18);
+      const h = clamp(game.pos.y - (game.groundY || 0), 0, 18);
       const s = 1 / (1 + h * 0.12);
-      playerShadow.position.set(game.pos.x, 0.01, game.pos.z);
+      playerShadow.position.set(game.pos.x, (game.groundY || 0) + 0.02, game.pos.z);
       playerShadow.scale.set(s, s, 1);
       playerShadow.material.opacity = 0.35 * clamp(1 - h * 0.06, 0.15, 1);
     }
@@ -1449,6 +1632,7 @@ BASELINE AUDIT (before fixes):
     const ang = Math.random() * Math.PI * 2;
     const r = game.map.size * (0.4 + Math.random() * 0.4);
     const pos = new THREE.Vector3(Math.cos(ang) * r, 0, Math.sin(ang) * r);
+    pos.y = sampleGround(pos.x, pos.z, -1).y;
     const type = pick(['racer', 'blocker', 'hunter']);
     activeRivals.push({ pos, vel: new THREE.Vector3(), yaw: Math.random() * Math.PI * 2, speed: 0, mesh, type, nearCd: 0 });
   }
@@ -1476,8 +1660,9 @@ BASELINE AUDIT (before fixes):
       r.speed = r.vel.length();
       r.pos.addScaledVector(r.vel, dt);
       clampToArena(game.map, r.pos, r.vel);
+      r.pos.y = sampleGround(r.pos.x, r.pos.z, -1).y;
       r.yaw = Math.atan2(r.vel.x, r.vel.z);
-      r.mesh.position.copy(r.pos); r.mesh.position.y = 0.55;
+      r.mesh.position.copy(r.pos); r.mesh.position.y = r.pos.y + 0.55;
       r.mesh.rotation.y = r.yaw;
 
       r.nearCd = Math.max(0, (r.nearCd || 0) - dt);
@@ -1514,10 +1699,13 @@ BASELINE AUDIT (before fixes):
     }
 
     if (best) game.pos.copy(best);
-    game.pos.y = 0;
+    game.pos.y = sampleGround(game.pos.x, game.pos.z, -1).y;
     game.vel.set(0, 0, 0);
     game.yaw = Math.random() * Math.PI * 2;
     game.yawVel = 0;
+    game.grounded = true;
+    game.groundY = game.pos.y;
+    game.groundNormal.copy(UP);
     game.invuln = 1.25;
     game.shake = Math.max(game.shake, 0.8);
     addCombo(-1.0);
